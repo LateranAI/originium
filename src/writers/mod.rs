@@ -1,5 +1,6 @@
 pub mod redis;
 pub mod rwkv_binidx;
+pub mod debug;
 
 use tokio::sync::mpsc::Receiver;
 use std::error::Error;

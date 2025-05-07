@@ -245,6 +245,9 @@ pub enum DataEndpoint {
         filename_prefix: String,
         num_threads: usize,
     },
+    DebugPrint {
+        prefix: Option<String>,
+    }
 }
 
 impl DataEndpoint {
