@@ -1,0 +1,40 @@
+[package]
+name = "originium"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# 线程并发
+tokio = { version = "1.44.2", features = ["full"] }
+rayon = { version = "1.10.0" }
+futures = { version = "0.3.31" }
+num_cpus = "1.16.0"
+
+# 数据结构
+once_cell = { version = "1.21.3" }
+lazy_static = { version = "1.5.0" }
+dashmap = { version = "7.0.0-rc2" }
+
+# 文件与序列化
+memchr = "2.7.4"
+bytes = { version = "1.10.1" }
+serde = { version = "1.0.218" }
+serde_json = { version = "1.0.139" }
+toml = "0.8.20"
+quick-xml = "0.37.5"
+needletail = "0.6.3"
+
+# 数据库
+sqlx = { version = "0.8", features = ["runtime-tokio"] }
+redis = { version = "0.30.0", features = ["default", "r2d2", "ahash", "tokio-comp"] }
+
+# 工具
+primes = "0.4.0"
+glob = "0.3.2"
+indicatif = { version = "0.17.11", features = ["tokio"] }
+async-trait = "0.1.88"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+thiserror = "2.0.12"
