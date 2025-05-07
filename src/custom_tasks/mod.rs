@@ -1,9 +1,11 @@
 pub mod protein_language;
+mod natural_language;
 
 use crate::errors::FrameworkError;
 
 use serde::Deserialize;
 use std::fmt::Debug;
+use std::path::Path;
 
 use crate::readers::Reader;
 use crate::writers::Writer;
@@ -23,14 +25,17 @@ use crate::custom_tasks::protein_language::ncbi_nr_softlabels_jsonl2redis::Redis
 #[async_trait::async_trait]
 pub trait Task: Send + Sync + 'static {
     type InputItem: Send + Sync + 'static + Debug + Clone + DeserializeOwned;
-    type OutputItem: Send + Sync + 'static + Debug + Clone + Serialize + Into<RedisKVPair>;
+    type ProcessedItem: Send + Sync + 'static + Debug + Clone + Serialize;
 
     fn get_inputs_info() -> Vec<DataEndpoint>;
     fn get_outputs_info() -> Vec<DataEndpoint>;
 
-    fn read(&self, endpoint_config: &DataEndpoint) -> Box<dyn Fn(String) -> Self::InputItem + Send + Sync + 'static>;
+    fn read(&self) -> Box<dyn Fn(String) -> Self::InputItem + Send + Sync + 'static>;
 
-    fn process(&self) -> Box<dyn Fn(Self::InputItem) -> Option<Self::OutputItem> + Send + Sync + 'static>;
+    fn process(&self) -> Box<dyn Fn(Self::InputItem) -> Option<Self::ProcessedItem> + Send + Sync + 'static>;
+
+    async fn get_writer(&self, endpoint_config: &DataEndpoint)
+        -> Result<Box<dyn Writer<Self::ProcessedItem>>, FrameworkError>;
 
     async fn run(&self) -> Result<(), FrameworkError> {
         println!("Starting Task (Framework Run V7)");
@@ -60,7 +65,7 @@ pub trait Task: Send + Sync + 'static {
                     });
                 }
             };
-            let read_fn = self.read(&input_config);
+            let read_fn = self.read();
 
             let mut reader_output_rx = reader_instance.pipeline(read_fn).await;
 
@@ -107,24 +112,9 @@ pub trait Task: Send + Sync + 'static {
             let mut transform_targets = Vec::new();
 
             for output_config in &output_configs {
-                let writer_instance: Box<dyn Writer<Self::OutputItem>> = match output_config {
-                    DataEndpoint::Redis { url, key_prefix: _, max_concurrent_tasks } => {
-                        let writer = RedisWriter::<Self::OutputItem>::new(url.clone(), *max_concurrent_tasks).await
-                            .map_err(|e| FrameworkError::ComponentBuildError {
-                                component_type: "RedisWriter (automated)".to_string(),
-                                endpoint_description: format!("{:?}", output_config),
-                                reason: e.to_string(),
-                            })?;
-                        Box::new(writer)
-                    }
-                    _ => {
-                        return Err(FrameworkError::UnsupportedEndpointType {
-                            endpoint_description: format!("{:?}", output_config),
-                            operation_description: "Automated writer creation in Task::run".to_string(),
-                        });
-                    }
-                };
-                let (tx_to_writer, rx_for_writer_pipeline) = mpsc::channel::<Self::OutputItem>(100);
+                let writer_instance = self.get_writer(output_config).await?;
+                
+                let (tx_to_writer, rx_for_writer_pipeline) = mpsc::channel::<Self::ProcessedItem>(100);
 
                 let component_name_for_error = format!("Writer for {:?}", output_config);
                 let writer_handle = tokio::spawn(async move {
@@ -250,65 +240,70 @@ pub enum DataEndpoint {
         key_prefix: String,
         max_concurrent_tasks: usize,
     },
+    RwkvBinidx {
+        base_path: String,
+        filename_prefix: String,
+        num_threads: usize,
+    },
 }
 
 impl DataEndpoint {
-    pub fn unwrap_file(&self) -> &String {
+    pub fn unwrap_file(&self) -> String {
         if let DataEndpoint::File { path } = self {
-            path
+            path.clone()
         } else {
             panic!("Called unwrap_file() on non-File endpoint");
         }
     }
 
-    pub fn unwrap_jsonl(&self) -> &String {
+    pub fn unwrap_jsonl(&self) -> String {
         if let DataEndpoint::Jsonl { path } = self {
-            path
+            path.clone()
         } else {
             panic!("Called unwrap_jsonl() on non-Jsonl endpoint");
         }
     }
 
-    pub fn unwrap_xml(&self) -> &String {
+    pub fn unwrap_xml(&self) -> String {
         if let DataEndpoint::Xml { path } = self {
-            path
+            path.clone()
         } else {
             panic!("Called unwrap_xml() on non-Xml endpoint");
         }
     }
 
-    pub fn unwrap_fasta(&self) -> &String {
+    pub fn unwrap_fasta(&self) -> String {
         if let DataEndpoint::Fasta { path } = self {
-            path
+            path.clone()
         } else {
             panic!("Called unwrap_fasta() on non-Fasta endpoint");
         }
     }
 
-    pub fn unwrap_postgres(&self) -> (&String, &String) {
+    pub fn unwrap_postgres(&self) -> (String, String) {
         if let DataEndpoint::Postgres { url, table } = self {
-            (url, table)
+            (url.clone(), table.clone())
         } else {
             panic!("Called unwrap_postgres() on non-Postgres endpoint");
         }
     }
 
-    pub fn unwrap_mysql(&self) -> (&String, &String) {
+    pub fn unwrap_mysql(&self) -> (String, String) {
         if let DataEndpoint::MySQL { url, table } = self {
-            (url, table)
+            (url.clone(), table.clone())
         } else {
             panic!("Called unwrap_mysql() on non-MySQL endpoint");
         }
     }
 
-    pub fn unwrap_redis(&self) -> (&String, &String, usize) {
+    pub fn unwrap_redis(&self) -> (String, String, usize) {
         if let DataEndpoint::Redis {
             url,
             key_prefix,
             max_concurrent_tasks,
         } = self
         {
-            (url, key_prefix, *max_concurrent_tasks)
+            (url.clone(), key_prefix.clone(), *max_concurrent_tasks)
         } else {
             panic!("Called unwrap_redis() on non-Redis endpoint");
         }

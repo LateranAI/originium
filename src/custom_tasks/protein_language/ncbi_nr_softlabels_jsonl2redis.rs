@@ -1,4 +1,5 @@
-use crate::custom_tasks::{DataEndpoint, Task};
+use crate::custom_tasks::{DataEndpoint, Task, Writer, FrameworkError};
+use crate::writers::redis::RedisWriter;
 
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -21,7 +22,7 @@ impl TaskNcbiNrSoftlabelsJsonl2Redis {
 #[async_trait::async_trait]
 impl Task for TaskNcbiNrSoftlabelsJsonl2Redis {
     type InputItem = SoftLabelEntry;
-    type OutputItem = RedisKVPair;
+    type ProcessedItem = RedisKVPair;
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::Jsonl {
@@ -40,7 +41,6 @@ impl Task for TaskNcbiNrSoftlabelsJsonl2Redis {
 
     fn read(
         &self,
-        _endpoint_config: &DataEndpoint,
     ) -> Box<dyn Fn(String) -> Self::InputItem + Send + Sync + 'static> {
         Box::new(|line: String| -> Self::InputItem {
             serde_json::from_str(&line).expect(&format!("Panic: JSON行解析失败: {}", line))
@@ -49,20 +49,42 @@ impl Task for TaskNcbiNrSoftlabelsJsonl2Redis {
 
     fn process(
         &self,
-    ) -> Box<dyn Fn(Self::InputItem) -> Option<Self::OutputItem> + Send + Sync + 'static> {
-        let (_, key_prefix_owned, _) = self.outputs_info[0].unwrap_redis();
-
-        Box::new(move |item: Self::InputItem| -> Option<Self::OutputItem> {
-            let key = format!("{}{}", key_prefix_owned, item.id);
-            let value_json = serde_json::to_string(&item).expect(&format!(
-                "Panic: InputItem (id: {}) 序列化至 JSON 以写入 Redis 失败",
-                item.id
-            ));
-            Some(RedisKVPair {
-                key,
-                value: value_json,
+    ) -> Box<dyn Fn(Self::InputItem) -> Option<Self::ProcessedItem> + Send + Sync + 'static> {
+        if let DataEndpoint::Redis { key_prefix, .. } = &self.outputs_info[0] {
+            let key_prefix_cloned = key_prefix.clone();
+            Box::new(move |item: Self::InputItem| -> Option<Self::ProcessedItem> {
+                let key = format!("{}{}", key_prefix_cloned, item.id);
+                let value_json = serde_json::to_string(&item).expect(&format!(
+                    "Panic: InputItem (id: {}) 序列化至 JSON 以写入 Redis 失败",
+                    item.id
+                ));
+                Some(RedisKVPair {
+                    key,
+                    value: value_json,
+                })
             })
-        })
+        } else {
+            panic!("TaskNcbiNrSoftlabelsJsonl2Redis expects its first output_info to be a Redis DataEndpoint.");
+        }
+    }
+
+    async fn get_writer(&self, endpoint_config: &DataEndpoint)
+        -> Result<Box<dyn Writer<Self::ProcessedItem>>, FrameworkError> {
+        match endpoint_config {
+            DataEndpoint::Redis { url, key_prefix: _, max_concurrent_tasks } => {
+                let writer = RedisWriter::<Self::ProcessedItem>::new(url.clone(), *max_concurrent_tasks).await
+                    .map_err(|e| FrameworkError::ComponentBuildError {
+                        component_type: "RedisWriter".to_string(),
+                        endpoint_description: format!("{:?}", endpoint_config),
+                        reason: e.to_string(),
+                    })?;
+                Ok(Box::new(writer))
+            }
+            _ => Err(FrameworkError::UnsupportedEndpointType {
+                endpoint_description: format!("{:?}", endpoint_config),
+                operation_description: "Writer creation in TaskNcbiNrSoftlabelsJsonl2Redis".to_string(),
+            }),
+        }
     }
 }
 
