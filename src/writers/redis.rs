@@ -1,14 +1,14 @@
 use super::Writer;
-use crate::custom_tasks::protein_language::ncbi_nr_softlabels_jsonl2redis::RedisKVPair;
+use crate::utils::common_type::RedisKVPair;
 use async_trait::async_trait;
 use futures::stream::{FuturesUnordered, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use redis::aio::MultiplexedConnection;
 use redis::AsyncCommands;
 use std::error::Error;
+use std::marker::PhantomData;
 use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
-use std::marker::PhantomData;
 
 pub struct RedisWriter<T> {
     pub client: MultiplexedConnection,
@@ -37,10 +37,7 @@ where
     T: Into<RedisKVPair>,
     RedisKVPair: Send + Sync + 'static,
 {
-    async fn pipeline(
-        &self,
-        mut rx: Receiver<T>,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn pipeline(&self, mut rx: Receiver<T>) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut workers = FuturesUnordered::new();
         let max_concurrent_tasks = self.max_concurrent_tasks;
 
@@ -54,9 +51,9 @@ where
 
         loop {
             while workers.len() >= max_concurrent_tasks {
-                if workers.next().await.is_none() && rx.is_closed() && workers.is_empty(){
+                if workers.next().await.is_none() && rx.is_closed() && workers.is_empty() {
                     break;
-                } 
+                }
             }
 
             if rx.is_closed() && workers.is_empty() {
@@ -89,7 +86,10 @@ where
                 }
             }
         }
-        pb.finish_with_message(format!("Redis writer finished. Total items written: {}.", pb.position()));
+        pb.finish_with_message(format!(
+            "Redis writer finished. Total items written: {}.",
+            pb.position()
+        ));
         Ok(())
     }
 }

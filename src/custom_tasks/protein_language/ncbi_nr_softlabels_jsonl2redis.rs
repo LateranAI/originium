@@ -1,21 +1,18 @@
-use std::fmt::{Display, Formatter};
 use crate::custom_tasks::{DataEndpoint, FrameworkError, Task, Writer};
 use crate::writers::redis::RedisWriter;
+use std::fmt::Display;
 
+use crate::utils::common_type::{LineInput, RedisKVPair};
 use crate::writers::debug::DebugWriter;
 use crate::TEST_MODE;
-use serde::{Serialize, Deserialize};
+use serde::Deserialize;
 use serde_json;
+use sqlx::FromRow;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use sqlx::FromRow;
-
 
 #[derive(Debug, Clone, FromRow, Deserialize)]
 pub struct TextLine {
-
-
-
     pub value: String,
 }
 
@@ -35,7 +32,7 @@ impl TaskNcbiNrSoftlabelsJsonl2Redis {
 
 #[async_trait::async_trait]
 impl Task for TaskNcbiNrSoftlabelsJsonl2Redis {
-    type InputItem = TextLine;
+    type InputItem = LineInput;
     type ProcessedItem = RedisKVPair;
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
@@ -58,9 +55,7 @@ impl Task for TaskNcbiNrSoftlabelsJsonl2Redis {
     }
 
     fn read(&self) -> Box<dyn Fn(String) -> Self::InputItem + Send + Sync + 'static> {
-        Box::new(|line_str: String| -> Self::InputItem { 
-            TextLine { value: line_str }
-        })
+        Box::new(|line_str: String| -> Self::InputItem { LineInput { content: line_str } })
     }
 
     fn process(
@@ -84,22 +79,30 @@ impl Task for TaskNcbiNrSoftlabelsJsonl2Redis {
 
         Box::new(
             move |input_item: Self::InputItem| -> Option<Self::ProcessedItem> {
-                let json_line_str = input_item.value;
+                let json_line_str = input_item.content;
                 let current_id = id_counter.fetch_add(1, Ordering::SeqCst);
                 let key = format!("{}{}", key_prefix_cloned, current_id);
 
-                let original_json_value: serde_json::Value = 
-                    serde_json::from_str(&json_line_str)
-                        .unwrap_or_else(|e| panic!("Panic: JSON行解析失败 in process: {} for line: {}", e, json_line_str));
+                let original_json_value: serde_json::Value = serde_json::from_str(&json_line_str)
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "Panic: JSON行解析失败 in process: {} for line: {}",
+                            e, json_line_str
+                        )
+                    });
 
-                let protein_id_val = original_json_value.get(0).expect("Missing protein_id_list in JSON array");
-                let softlabel_seq_val = original_json_value.get(1).expect("Missing softlabel_seq in JSON array");
+                let protein_id_val = original_json_value
+                    .get(0)
+                    .expect("Missing protein_id_list in JSON array");
+                let softlabel_seq_val = original_json_value
+                    .get(1)
+                    .expect("Missing softlabel_seq in JSON array");
 
                 let output_redis_value_json = serde_json::json!({
                     "protein_id_list": protein_id_val,
                     "softlabel_seq": softlabel_seq_val
                 });
-                
+
                 let value_as_string = serde_json::to_string(&output_redis_value_json)
                     .expect("Failed to serialize final JSON object to string for Redis");
 
@@ -145,17 +148,5 @@ impl Task for TaskNcbiNrSoftlabelsJsonl2Redis {
                     .to_string(),
             }),
         }
-    }
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct RedisKVPair {
-    pub key: String,
-    pub value: String,
-}
-
-impl Display for RedisKVPair {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} -> {}", self.key, self.value)
     }
 }

@@ -1,14 +1,13 @@
-pub mod protein_language;
 mod natural_language;
+pub mod protein_language;
 
 use crate::errors::FrameworkError;
 
 use serde::Deserialize;
 use std::fmt::{Debug, Display};
 
-
-use sqlx::FromRow;
 use sqlx::any::AnyRow;
+use sqlx::FromRow;
 
 use crate::readers::Reader;
 use crate::writers::Writer;
@@ -20,20 +19,21 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::readers::fasta::FastaReader;
 use crate::readers::jsonl::JsonlReader;
 use crate::readers::line_reader::FileReader;
-use crate::readers::xml::XmlReader;
-use crate::readers::fasta::FastaReader;
 use crate::readers::sql::SqlReader;
-
-
-
-
+use crate::readers::xml::XmlReader;
 
 #[async_trait::async_trait]
 pub trait Task: Send + Sync + 'static {
-
-    type InputItem: Send + Sync + 'static + Debug + Clone + DeserializeOwned + Unpin
+    type InputItem: Send
+        + Sync
+        + 'static
+        + Debug
+        + Clone
+        + DeserializeOwned
+        + Unpin
         + for<'r> FromRow<'r, AnyRow>;
     type ProcessedItem: Send + Sync + 'static + Debug + Clone + Serialize + Display;
 
@@ -42,10 +42,14 @@ pub trait Task: Send + Sync + 'static {
 
     fn read(&self) -> Box<dyn Fn(String) -> Self::InputItem + Send + Sync + 'static>;
 
-    fn process(&self) -> Box<dyn Fn(Self::InputItem) -> Option<Self::ProcessedItem> + Send + Sync + 'static>;
+    fn process(
+        &self,
+    ) -> Box<dyn Fn(Self::InputItem) -> Option<Self::ProcessedItem> + Send + Sync + 'static>;
 
-    async fn get_writer(&self, endpoint_config: &DataEndpoint)
-        -> Result<Box<dyn Writer<Self::ProcessedItem>>, FrameworkError>;
+    async fn get_writer(
+        &self,
+        endpoint_config: &DataEndpoint,
+    ) -> Result<Box<dyn Writer<Self::ProcessedItem>>, FrameworkError>;
 
     async fn run(&self) -> Result<(), FrameworkError> {
         println!("Starting Task (Framework Run V7)");
@@ -65,19 +69,13 @@ pub trait Task: Send + Sync + 'static {
 
         for input_config in input_configs {
             let reader_instance: Box<dyn Reader<Self::InputItem>> = match &input_config {
-                DataEndpoint::Jsonl { path } => {
-                    Box::new(JsonlReader::new(path.clone()))
-                }
-                DataEndpoint::File { path } => {
-                    Box::new(FileReader::new(path.clone()))
-                }
+                DataEndpoint::Jsonl { path } => Box::new(JsonlReader::new(path.clone())),
+                DataEndpoint::File { path } => Box::new(FileReader::new(path.clone())),
                 DataEndpoint::Xml { path } => {
                     let record_tag = "record".to_string();
                     Box::new(XmlReader::new(path.clone(), record_tag))
                 }
-                DataEndpoint::Fasta { path } => {
-                    Box::new(FastaReader::new(path.clone()))
-                }
+                DataEndpoint::Fasta { path } => Box::new(FastaReader::new(path.clone())),
                 DataEndpoint::Postgres { url, table } => {
                     let query = format!("SELECT * FROM {}", table);
                     Box::new(SqlReader::<Self::InputItem>::new(url.clone(), query))
@@ -86,15 +84,29 @@ pub trait Task: Send + Sync + 'static {
                     let query = format!("SELECT * FROM {}", table);
                     Box::new(SqlReader::<Self::InputItem>::new(url.clone(), query))
                 }
-                DataEndpoint::Redis { url: _url, key_prefix: _key_prefix, max_concurrent_tasks: _max_concurrent_tasks } => {
+                DataEndpoint::Redis {
+                    url: _url,
+                    key_prefix: _key_prefix,
+                    max_concurrent_tasks: _max_concurrent_tasks,
+                } => {
                     return Err(FrameworkError::UnsupportedEndpointType {
-                        endpoint_description: format!("SQL Reader (Redis) for {:?} pending FromRow solution for Task::InputItem", input_config),
+                        endpoint_description: format!(
+                            "SQL Reader (Redis) for {:?} pending FromRow solution for Task::InputItem",
+                            input_config
+                        ),
                         operation_description: "Automated reader creation in Task::run".to_string(),
                     });
                 }
-                DataEndpoint::RwkvBinidx { base_path: _base_path, filename_prefix: _filename_prefix, num_threads: _num_threads } => {
+                DataEndpoint::RwkvBinidx {
+                    base_path: _base_path,
+                    filename_prefix: _filename_prefix,
+                    num_threads: _num_threads,
+                } => {
                     return Err(FrameworkError::UnsupportedEndpointType {
-                        endpoint_description: format!("SQL Reader (RwkvBinidx) for {:?} pending FromRow solution for Task::InputItem", input_config),
+                        endpoint_description: format!(
+                            "SQL Reader (RwkvBinidx) for {:?} pending FromRow solution for Task::InputItem",
+                            input_config
+                        ),
                         operation_description: "Automated reader creation in Task::run".to_string(),
                     });
                 }
@@ -153,8 +165,9 @@ pub trait Task: Send + Sync + 'static {
 
             for output_config in &output_configs {
                 let writer_instance = self.get_writer(output_config).await?;
-                
-                let (tx_to_writer, rx_for_writer_pipeline) = mpsc::channel::<Self::ProcessedItem>(100);
+
+                let (tx_to_writer, rx_for_writer_pipeline) =
+                    mpsc::channel::<Self::ProcessedItem>(100);
 
                 let component_name_for_error = format!("Writer for {:?}", output_config);
                 let writer_handle = tokio::spawn(async move {
@@ -179,7 +192,10 @@ pub trait Task: Send + Sync + 'static {
                     if let Some(output_item) = process_fn(input_item.clone()) {
                         for (_output_config, tx_to_writer) in &transform_targets {
                             if tx_to_writer.send(output_item.clone()).await.is_err() {
-                                let err_msg = format!("Writer channel closed for output {:?}. Cannot send transformed item.", _output_config);
+                                let err_msg = format!(
+                                    "Writer channel closed for output {:?}. Cannot send transformed item.",
+                                    _output_config
+                                );
                                 eprintln!("FrameworkError: {}", err_msg);
 
                                 return Err(FrameworkError::ChannelSendError {
