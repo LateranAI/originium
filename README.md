@@ -94,8 +94,7 @@ pub trait Task: Send + Sync + 'static {
 `DataEndpoint` 用于统一描述各种数据源和数据汇。框架会根据此枚举的变体自动选择和配置合适的 `Reader` 或 `Writer`。
 
 目前支持的端点类型包括：
-*   `File { path: String }`: 通用行式文件读写。
-*   `Jsonl { path: String }`: JSON Lines 文件。
+*   `LineDelimited { path: String, format: LineFormat }`: 通用行式文件读写，通过 `format` (如 `Jsonl`, `Tsv`, `PlainText`) 指定具体格式。
 *   `Xml { path: String }`: XML 文件 (需要配置记录标签)。
 *   `Fasta { path: String }`: FASTA/FASTQ 文件。
 *   `Postgres { url: String, table: String }`: PostgreSQL 数据库表 (读取时 `table` 用于 `SELECT * FROM table`, 写入时指定目标表)。
