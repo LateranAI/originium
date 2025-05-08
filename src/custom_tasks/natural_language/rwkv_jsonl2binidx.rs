@@ -2,7 +2,6 @@ use crate::custom_tasks::{DataEndpoint, Task, Writer, FrameworkError};
 use crate::utils::tokenizer::Tokenizer;
 use crate::writers::rwkv_binidx::{BinidxItem, RwkvBinidxWriter};
 use crate::writers::debug::DebugWriter;
-use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::sync::Arc;
@@ -75,7 +74,7 @@ impl Task for TaskRwkvJsonlBindix {
     ) -> Result<Box<dyn Writer<Self::ProcessedItem>>, FrameworkError> {
         match endpoint_config {
             DataEndpoint::RwkvBinidx { base_path, filename_prefix, num_threads } => {
-                info!("Configuring RwkvBinidxWriter for output.");
+                println!("Configuring RwkvBinidxWriter for output.");
                 let writer = RwkvBinidxWriter::new(
                     Path::new(base_path),
                     filename_prefix,
@@ -87,8 +86,8 @@ impl Task for TaskRwkvJsonlBindix {
                 })?;
                 Ok(Box::new(writer))
             }
-            DataEndpoint::DebugPrint { prefix } => {
-                info!("Configuring DebugWriter for output.");
+            DataEndpoint::Debug { prefix } => {
+                println!("Configuring DebugWriter for output.");
                 let writer = match prefix {
                     Some(p) => DebugWriter::<Self::ProcessedItem>::with_prefix(p),
                     None => DebugWriter::<Self::ProcessedItem>::new(),

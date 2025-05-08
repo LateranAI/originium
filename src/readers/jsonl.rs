@@ -117,7 +117,7 @@ impl JsonlReader {
                         break; 
                     }
                 }
-                pb_scan.inc(bytes_processed_in_chunk.saturating_sub( (current_pos - start) ) );
+                pb_scan.inc(bytes_processed_in_chunk.saturating_sub(current_pos - start) );
                 local_offsets
             })
             .collect();

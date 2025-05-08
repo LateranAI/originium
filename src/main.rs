@@ -1,5 +1,5 @@
 use crate::custom_tasks::protein_language::ncbi_nr_softlabels_jsonl2redis::TaskNcbiNrSoftlabelsJsonl2Redis;
-use crate::custom_tasks::Task; // Bring Task trait into scope to use its methods
+use crate::custom_tasks::Task;
 
 mod custom_tasks;
 mod readers;
@@ -7,15 +7,14 @@ mod writers;
 mod utils;
 mod errors; // Declare the errors module
 
+const TEST_MODE: bool = false;
+
 #[tokio::main]
 async fn main() {
-    env_logger::init(); // Initialize logger
-    log::info!("Tasks start!");
+    println!("Tasks start!");
     let task = TaskNcbiNrSoftlabelsJsonl2Redis::new(); // Call the constructor
     if let Err(e) = task.run().await {
-        log::error!("Task execution failed: {:?}", e);
-        // Optionally, exit with an error code
-        // std::process::exit(1);
+        eprintln!("Task execution failed: {:?}", e);
     }
-    log::info!("Task invocation completed.");
+    println!("Task invocation completed.");
 }

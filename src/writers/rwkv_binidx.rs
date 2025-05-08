@@ -2,7 +2,6 @@ use crate::writers::Writer; // Ensure Writer trait is in scope
 use crate::utils::tokenizer::Tokenizer; // Will be removed from this file's direct use
 use bytemuck;
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{info, error};
 use serde::Serialize; // Added Serialize import
 use std::fs::{File, remove_file};
 use std::io::{BufWriter, Write, BufReader, Read}; // Removed Seek, SeekFrom as pipeline handles full flow
@@ -71,7 +70,7 @@ impl Writer<BinidxItem> for RwkvBinidxWriter {
         &self, // pipeline now takes &self
         mut rx: TkReceiver<BinidxItem>, // Changed to tokio's mpsc::Receiver
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        info!("RwkvBinidxWriter pipeline started for {} with {} threads.", self.filename_prefix, self.num_threads);
+        println!("RwkvBinidxWriter pipeline started for {} with {} threads.", self.filename_prefix, self.num_threads);
         let overall_start_time = Instant::now();
 
         let (coordinator_input_tx, mut coordinator_input_rx) = tk_mpsc::channel::<Option<BinidxItem>>(self.num_threads * 2); // Buffer for coordinator
@@ -165,10 +164,10 @@ impl Writer<BinidxItem> for RwkvBinidxWriter {
                                 current_worker_idx = (current_worker_idx + 1) % num_threads_coord;
                             }
                             None => { // End signal for coordinator from main pipeline
-                                info!("[Coordinator] End signal received. Signaling workers to stop.");
+                                println!("[Coordinator] End signal received. Signaling workers to stop.");
                                 for (idx, sender) in worker_senders.iter().enumerate() {
                                      if sender.send(None).await.is_err() { // Send None to stop worker
-                                         error!("[Coordinator] Failed to send stop signal to worker {}", idx);
+                                         eprintln!("[Coordinator] Failed to send stop signal to worker {}", idx);
                                      }
                                 }
                                 break; 
@@ -211,14 +210,14 @@ impl Writer<BinidxItem> for RwkvBinidxWriter {
             while let Some(item) = rx.recv().await {
                 forwarding_item_count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if coordinator_input_tx.send(Some(item)).await.is_err() {
-                    error!("Coordinator input channel closed. Cannot forward item.");
+                    eprintln!("Coordinator input channel closed. Cannot forward item.");
                     // This error should propagate out of the pipeline
                     return Err("Coordinator input channel closed while forwarding".to_string());
                 }
             }
             // Signal coordinator that no more items are coming
             if coordinator_input_tx.send(None).await.is_err() {
-                error!("Failed to send end signal to coordinator after input rx closed.");
+                eprintln!("Failed to send end signal to coordinator after input rx closed.");
                  return Err("Failed to send end signal to coordinator".to_string());
             }
             Ok(())
@@ -226,7 +225,7 @@ impl Writer<BinidxItem> for RwkvBinidxWriter {
         
         // Wait for forwarding to complete
         match forward_to_coordinator_handle.await {
-            Ok(Ok(())) => info!("All items forwarded to coordinator."),
+            Ok(Ok(())) => println!("All items forwarded to coordinator."),
             Ok(Err(e)) => return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))),
             Err(e) => return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("Forwarding task panicked: {:?}", e)))),
         }
@@ -264,14 +263,14 @@ impl Writer<BinidxItem> for RwkvBinidxWriter {
 
 
         if worker_results.len() != self.num_threads {
-            error!("Expected {} worker results, but got {}. Finalization might be incomplete.", self.num_threads, worker_results.len());
+            eprintln!("Expected {} worker results, but got {}. Finalization might be incomplete.", self.num_threads, worker_results.len());
             if worker_results.is_empty() && self.num_threads > 0 {
                  return Err("No worker results collected, cannot finalize.".into());
             }
         }
 
         // --- Merge temporary .bin files and collect all doc_sizes (from old finalize) ---
-        info!("Merging temporary .bin files...");
+        println!("Merging temporary .bin files...");
         let final_bin_path = self.base_path.join(&self.filename_prefix).with_extension("bin");
         let mut final_bin_writer = BufWriter::new(File::create(&final_bin_path)?);
         
@@ -300,14 +299,14 @@ impl Writer<BinidxItem> for RwkvBinidxWriter {
                 merge_pb.inc(copied_bytes);
             }
             if let Err(e) = remove_file(&result.temp_bin_path) {
-                 error!("Failed to remove temp file {:?}: {}", result.temp_bin_path, e);
+                 eprintln!("Failed to remove temp file {:?}: {}", result.temp_bin_path, e);
             }
         }
         final_bin_writer.flush()?;
         merge_pb.finish_with_message(format!("Temporary .bin files merged ({} bytes).", total_bytes_in_final_bin));
 
         // --- Build and write .idx file (from old finalize) ---
-        info!("Building and writing .idx file to path: {:?}", self.base_path);
+        println!("Building and writing .idx file to path: {:?}", self.base_path);
         let final_idx_path = self.base_path.join(&self.filename_prefix).with_extension("idx");
         let mut idx_writer = BufWriter::new(File::create(&final_idx_path)?);
 
@@ -333,7 +332,7 @@ impl Writer<BinidxItem> for RwkvBinidxWriter {
             idx_writer.write_all(&i.to_le_bytes())?;
         }
         idx_writer.flush()?;
-        info!(".idx file written to {:?}", final_idx_path);
+        println!(".idx file written to {:?}", final_idx_path);
 
         // --- Calculate Magic Prime (from old finalize) ---
         let mut magic_prime: u64 = 0;
@@ -365,17 +364,17 @@ impl Writer<BinidxItem> for RwkvBinidxWriter {
                 }
             }
         }
-        info!("Magic prime (example context {}): {}", context_length, magic_prime);
+        println!("Magic prime (example context {}): {}", context_length, magic_prime);
         
         let duration = overall_start_time.elapsed();
-        info!("RwkvBinidxWriter pipeline finished successfully in {:?}.", duration);
-        info!(
+        println!("RwkvBinidxWriter pipeline finished successfully in {:?}.", duration);
+        println!(
             "Output: {} and {}",
             final_bin_path.display(),
             final_idx_path.display()
         );
         let total_items_processed = forwarding_overall_item_count.load(std::sync::atomic::Ordering::Relaxed);
-        info!(
+        println!(
             "Processed: {} items, {} documents, {} tokens. Final .bin size: {:.2} MB.",
             total_items_processed,
             total_docs,

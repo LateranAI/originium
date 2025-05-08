@@ -1,6 +1,5 @@
 use crate::writers::Writer;
 use async_trait::async_trait;
-use log::info; // Using info level for debug output, could also use debug! or println!
 use std::error::Error;
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -41,15 +40,15 @@ impl<T: Debug + Send + Sync + 'static> Writer<T> for DebugWriter<T> {
         let prefix_str = self.prefix.as_deref().unwrap_or("[DebugWriter]");
         let mut count: u64 = 0;
 
-        info!("{} Pipeline started. Waiting for items...", prefix_str);
+        println!("{} Pipeline started. Waiting for items...", prefix_str);
 
         while let Some(item) = rx.recv().await {
             // Print the item using its Debug implementation
-            info!("{} Item {}: {:?}", prefix_str, count, item);
+            println!("{} Item {}: {:?}", prefix_str, count, item);
             count += 1;
         }
 
-        info!(
+        println!(
             "{} Pipeline finished. Receiver channel closed. Total items received: {}.",
             prefix_str, count
         );

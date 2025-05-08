@@ -215,6 +215,9 @@ pub trait Task: Send + Sync + 'static {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum DataEndpoint {
+    Debug {
+        prefix: Option<String>,
+    },
     File {
         path: String,
     },
@@ -245,9 +248,6 @@ pub enum DataEndpoint {
         filename_prefix: String,
         num_threads: usize,
     },
-    DebugPrint {
-        prefix: Option<String>,
-    }
 }
 
 impl DataEndpoint {
