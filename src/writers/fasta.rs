@@ -1,5 +1,5 @@
 use crate::writers::Writer;
-use crate::readers::fasta::FastaRecord; // Assuming FastaRecord is the common representation
+use crate::readers::fasta::FastaRecord;
 use async_trait::async_trait;
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -10,13 +10,13 @@ use std::fmt::Debug;
 
 pub struct FastaWriter<T: Send + Sync + 'static + Debug + Into<FastaRecord>> {
     final_path: PathBuf,
-    line_width: usize, // Width for sequence line wrapping
+    line_width: usize,
     _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T: Send + Sync + 'static + Debug + Into<FastaRecord>> FastaWriter<T> {
     pub fn new(path: String, line_width: Option<usize>) -> Self {
-        let width = line_width.unwrap_or(70); // Default line width
+        let width = line_width.unwrap_or(70);
         println!(
             "[FastaWriter] Initialized for path: {}. Sequence line width: {}",
             path, width
@@ -52,17 +52,17 @@ impl<T: Send + Sync + 'static + Debug + Into<FastaRecord>> Writer<T> for FastaWr
         while let Some(item) = rx.recv().await {
             let record: FastaRecord = item.into();
 
-            // --- Write ID Line --- 
-            // Attempt to convert ID bytes to UTF-8. Handle potential errors.
-            let id_str = String::from_utf8_lossy(&record.id); // Use lossy conversion for simplicity
-            // Alternatively, return an error if ID is not valid UTF-8:
-            // let id_str = String::from_utf8(record.id).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Fasta ID is not valid UTF-8: {}", e)))?;
+
+
+            let id_str = String::from_utf8_lossy(&record.id);
+
+
             
             writer.write_all(b">")?;
             writer.write_all(id_str.as_bytes())?;
             writer.write_all(b"\n")?;
 
-            // --- Write Sequence Lines --- 
+
             for chunk in record.seq.chunks(self.line_width) {
                 writer.write_all(chunk)?;
                 writer.write_all(b"\n")?;
@@ -72,7 +72,7 @@ impl<T: Send + Sync + 'static + Debug + Into<FastaRecord>> Writer<T> for FastaWr
             pb_items.inc(1);
         }
 
-        writer.flush()?; // Ensure all data is written
+        writer.flush()?;
 
         pb_items.finish_with_message(format!("[FastaWriter] Record writing complete. {} records written.", items_written));
 

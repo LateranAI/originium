@@ -5,14 +5,14 @@ mod custom_tasks;
 mod readers;
 mod writers;
 mod utils;
-mod errors; // Declare the errors module
+mod errors;
 
 const TEST_MODE: bool = false;
 
 #[tokio::main]
 async fn main() {
     println!("Tasks start!");
-    let task = TaskNcbiNrSoftlabelsJsonl2Redis::new(); // Call the constructor
+    let task = TaskNcbiNrSoftlabelsJsonl2Redis::new();
     if let Err(e) = task.run().await {
         eprintln!("Task execution failed: {:?}", e);
     }

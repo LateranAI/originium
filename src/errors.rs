@@ -7,8 +7,8 @@ pub enum FrameworkError {
 
     #[error("Component build error: Failed to build {component_type} for endpoint configuration '{endpoint_description}'. Reason: {reason}")]
     ComponentBuildError {
-        component_type: String, // e.g., "Reader" or "Writer"
-        endpoint_description: String,  // e.g., a file path, URL, or relevant part of DataEndpoint
+        component_type: String,
+        endpoint_description: String,
         reason: String,
     },
 
@@ -27,7 +27,7 @@ pub enum FrameworkError {
     
     #[error("Data transformation error for item: {item_description}. Reason: {reason}")]
     TransformError{
-        item_description: String, // A brief description of the item being transformed
+        item_description: String,
         reason: String,
     },
 
@@ -39,7 +39,7 @@ pub enum FrameworkError {
 
     #[error("Channel send error while sending to {channel_description}: {error_message}")]
     ChannelSendError{
-        channel_description: String, // e.g., "main input broker" or "writer specific channel"
+        channel_description: String,
         error_message: String,
     },
     
@@ -47,12 +47,11 @@ pub enum FrameworkError {
     NoComponentFound(String),
 }
 
-// Helper for converting Box<dyn Error> into FrameworkError for pipeline errors
-// impl FrameworkError {
-//     pub fn pipeline_error<E: std::error::Error + Send + Sync + 'static>(component_name: &str, error: E) -> Self {
-//         FrameworkError::PipelineError {
-//             component_name: component_name.to_string(),
-//             source: Box::new(error),
-//         }
-//     }
-// } 
+
+
+
+
+
+
+
+

@@ -6,8 +6,9 @@ use crate::errors::FrameworkError;
 use serde::Deserialize;
 use std::fmt::{Debug, Display};
 
-// use sqlx::FromRow; // No longer needed here
-// use sqlx::any::AnyRow; // No longer needed here
+
+use sqlx::FromRow;
+use sqlx::any::AnyRow;
 
 use crate::readers::Reader;
 use crate::writers::Writer;
@@ -23,15 +24,17 @@ use crate::readers::jsonl::JsonlReader;
 use crate::readers::line_reader::FileReader;
 use crate::readers::xml::XmlReader;
 use crate::readers::fasta::FastaReader;
-// use crate::readers::sql::SqlReader; // Commented out as SqlReader usage is disabled
+use crate::readers::sql::SqlReader;
 
-// use crate::writers::xml::XmlWriter; // Unused import
-// use crate::writers::fasta::FastaWriter; // Unused import
-// use crate::writers::sql::{SqlWriter, SqlBindable}; // Unused imports
+
+
+
 
 #[async_trait::async_trait]
 pub trait Task: Send + Sync + 'static {
-    type InputItem: Send + Sync + 'static + Debug + Clone + DeserializeOwned + Unpin;
+
+    type InputItem: Send + Sync + 'static + Debug + Clone + DeserializeOwned + Unpin
+        + for<'r> FromRow<'r, AnyRow>;
     type ProcessedItem: Send + Sync + 'static + Debug + Clone + Serialize + Display;
 
     fn get_inputs_info() -> Vec<DataEndpoint>;
@@ -75,21 +78,23 @@ pub trait Task: Send + Sync + 'static {
                 DataEndpoint::Fasta { path } => {
                     Box::new(FastaReader::new(path.clone()))
                 }
-                DataEndpoint::Postgres { url: _url, table: _table } => {
-                    // let query = format!("SELECT * FROM {}", table);
-                    // Box::new(SqlReader::<Self::InputItem>::new(url.clone(), query))
-                    // Temporarily commented out to allow compilation without global FromRow
+                DataEndpoint::Postgres { url, table } => {
+                    let query = format!("SELECT * FROM {}", table);
+                    Box::new(SqlReader::<Self::InputItem>::new(url.clone(), query))
+                }
+                DataEndpoint::MySQL { url, table } => {
+                    let query = format!("SELECT * FROM {}", table);
+                    Box::new(SqlReader::<Self::InputItem>::new(url.clone(), query))
+                }
+                DataEndpoint::Redis { url: _url, key_prefix: _key_prefix, max_concurrent_tasks: _max_concurrent_tasks } => {
                     return Err(FrameworkError::UnsupportedEndpointType {
-                        endpoint_description: format!("SQL Reader (Postgres) for {:?} pending FromRow solution for Task::InputItem", input_config),
+                        endpoint_description: format!("SQL Reader (Redis) for {:?} pending FromRow solution for Task::InputItem", input_config),
                         operation_description: "Automated reader creation in Task::run".to_string(),
                     });
                 }
-                DataEndpoint::MySQL { url: _url, table: _table } => {
-                    // let query = format!("SELECT * FROM {}", table);
-                    // Box::new(SqlReader::<Self::InputItem>::new(url.clone(), query))
-                    // Temporarily commented out to allow compilation without global FromRow
+                DataEndpoint::RwkvBinidx { base_path: _base_path, filename_prefix: _filename_prefix, num_threads: _num_threads } => {
                     return Err(FrameworkError::UnsupportedEndpointType {
-                        endpoint_description: format!("SQL Reader (MySQL) for {:?} pending FromRow solution for Task::InputItem", input_config),
+                        endpoint_description: format!("SQL Reader (RwkvBinidx) for {:?} pending FromRow solution for Task::InputItem", input_config),
                         operation_description: "Automated reader creation in Task::run".to_string(),
                     });
                 }

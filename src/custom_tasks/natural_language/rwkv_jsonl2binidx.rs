@@ -5,8 +5,9 @@ use crate::writers::debug::DebugWriter;
 use serde::Deserialize;
 use serde_json;
 use std::sync::Arc;
+use sqlx::FromRow;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, FromRow)]
 pub struct TextRecord {
     pub text: String,
 }

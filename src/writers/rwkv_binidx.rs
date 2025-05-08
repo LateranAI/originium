@@ -1,44 +1,44 @@
-use crate::writers::Writer; // Ensure Writer trait is in scope
+use crate::writers::Writer;
 use bytemuck;
 use indicatif::{ProgressBar, ProgressStyle};
-use serde::Serialize; // Added Serialize import
-use std::fs::{self, File}; // Removed OpenOptions
-use std::io::{BufWriter, Write, BufReader}; // Removed Seek, SeekFrom as pipeline handles full flow
+use serde::Serialize;
+use std::fs::{self, File};
+use std::io::{BufWriter, Write, BufReader};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Instant;
-use tokio::sync::mpsc::Receiver as TokioReceiver; // Renamed for clarity if multiple Receiver types are in scope
+use tokio::sync::mpsc::Receiver as TokioReceiver;
 use tokio::task::JoinHandle;
 use std::fmt::Debug;
 use async_trait::async_trait;
-use std::sync::mpsc::{self, Sender as StdSender, Receiver as StdReceiver}; // Restored std::sync::mpsc
+use std::sync::mpsc::{self, Sender as StdSender, Receiver as StdReceiver};
 use std::marker::PhantomData;
-use futures::future::join_all; // Added for join_all
+use futures::future::join_all;
 use tokio::sync::mpsc::{channel, Sender as TokioSender};
 
-// Constants from jsonl2binidx, verify their meaning for RWKV format if possible
-const MAGIC_HDR: &[u8] = b"MMIDIDX\x00\x00"; // "Magic Multi-Index IDX" ?
-const VERSION: [u8; 8] = [1, 0, 0, 0, 0, 0, 0, 0]; // Version 1.0
-const ACTUAL_DTYPE_BYTE: [u8; 1] = [8u8]; // Explicitly add/ensure this constant for DTYPE
-const TOKEN_SIZE_BYTES: usize = 2; // Assuming u16 tokens
+
+const MAGIC_HDR: &[u8] = b"MMIDIDX\x00\x00";
+const VERSION: [u8; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
+const ACTUAL_DTYPE_BYTE: [u8; 1] = [8u8];
+const TOKEN_SIZE_BYTES: usize = 2;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BinidxItem {
     pub tokens: Vec<u16>,
 }
 
-// Implement Display for BinidxItem
+
 impl std::fmt::Display for BinidxItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Provide a summary representation, as displaying all tokens might be too verbose.
+
         write!(f, "BinidxItem(tokens: [{}])", self.tokens.len())
     }
 }
 
-// WorkerPayload now internal to pipeline's worker setup
+
 struct WorkerPayloadInternal {
-    item: Option<BinidxItem>, // Option to signal end-of-stream
-    // thread_id is implicit by worker task
+    item: Option<BinidxItem>,
+
 }
 
 struct WorkerResult {

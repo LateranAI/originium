@@ -2,16 +2,16 @@ use crate::readers::Reader;
 use async_trait::async_trait;
 use sqlx::any::{AnyPoolOptions, AnyRow};
 use sqlx::{FromRow};
-use futures::stream::StreamExt; // For stream.next()
+use futures::stream::StreamExt;
 use std::fmt::Debug;
 use tokio::sync::mpsc;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::marker::{Unpin, PhantomData}; // Added PhantomData
+use std::marker::{Unpin, PhantomData};
 
 pub struct SqlReader<Item> {
     connection_url: String,
-    query: String, // SQL query to execute
-    _marker: PhantomData<Item>, // Marker for the generic type Item
+    query: String,
+    _marker: PhantomData<Item>,
 }
 
 impl<Item> SqlReader<Item>
@@ -38,7 +38,7 @@ where
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(100);
         let pool_options = AnyPoolOptions::new()
-            .max_connections(5); // Removed connect_timeout
+            .max_connections(5);
             
         let query = self.query.clone();
         let url = self.connection_url.clone();
@@ -61,7 +61,7 @@ where
             );
             pb_process.enable_steady_tick(std::time::Duration::from_millis(120));
 
-            // We need to specify the DB type for query_as, matching the FromRow bound (Any)
+
             let mut stream = sqlx::query_as::<sqlx::Any, Item>(&query).fetch(&pool);
             let mut items_processed: u64 = 0;
 

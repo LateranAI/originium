@@ -9,7 +9,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender as TokioSender};
 use tokio::task::JoinHandle;
 use std::fmt::Debug;
 
-// Renamed from FileWriter struct conceptually, but keeping the name for now
+
 pub struct FileWriter<T: Display + Send + Sync + 'static + Debug> {
     final_path: PathBuf,
     num_concurrent_writers: usize,
@@ -57,7 +57,7 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
         let mut temp_file_paths = Vec::new();
         let mut worker_senders = Vec::new();
 
-        // Create and store senders for worker tasks
+
         for i in 0..self.num_concurrent_writers {
             let (tx_to_worker, mut rx_from_main): (TokioSender<Option<T>>, Receiver<Option<T>>) = mpsc::channel(100);
             worker_senders.push(tx_to_worker);
@@ -87,7 +87,7 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
             writer_task_handles.push(handle);
         }
 
-        // Distribute items to worker tasks
+
         let mut current_worker_idx = 0;
         while let Some(item) = rx.recv().await {
             item_count += 1;
@@ -106,12 +106,12 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
         }
         pb_items.finish_with_message(format!("[FileWriter] Item processing complete. {} items processed.", item_count));
 
-        // Signal all workers that no more items are coming
+
         for tx_to_worker in worker_senders {
             let _ = tx_to_worker.send(None).await;
         }
 
-        // Await all worker tasks
+
         let mut total_lines_written_by_workers: u64 = 0;
         for (i, handle) in writer_task_handles.into_iter().enumerate() {
             match handle.await {
@@ -146,7 +146,7 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
             return Ok(());
         }
 
-        // Merge temporary files into the final output file
+
         println!("[FileWriter] Merging {} temporary files into {}", temp_file_paths.len(), self.final_path.display());
         let pb_merge = ProgressBar::new(temp_file_paths.len() as u64);
         pb_merge.set_style(
@@ -178,7 +178,7 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
         final_writer.flush()?;
         pb_merge.finish_with_message("[FileWriter] Merging complete.");
 
-        // Clean up temporary files
+
         for temp_path in temp_file_paths {
             if temp_path.exists() {
                 if let Err(e) = std::fs::remove_file(&temp_path) {

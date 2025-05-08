@@ -8,33 +8,33 @@ use tokio::sync::mpsc::Receiver;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::marker::PhantomData;
 
-// Trait to help SqlWriter bind parameters from the item.
-// Item needs to implement this trait.
-// Implementors should ensure the order of values returned by bind_parameters
-// matches the order of column_names provided to SqlWriter::new.
+
+
+
+
 pub trait SqlBindable {
-    // Provides a way to bind parameters to a sqlx query.
-    // This requires dynamic dispatch or a more complex setup if values have different types.
-    // For simplicity, let's assume parameters can be bound sequentially.
-    // A more robust solution might involve a macro or passing closures.
+
+
+
+
     fn bind_parameters<'q, DB: Database>(self, query: Query<'q, DB, DB::Arguments<'q>>) -> Query<'q, DB, DB::Arguments<'q>> 
-    where Self: Sized + Send + 'q; // Ensure Self lives long enough and is Send
+    where Self: Sized + Send + 'q;
 }
 
 pub struct SqlWriter<T: Send + Sync + 'static + Debug + SqlBindable> {
     connection_url: String,
     table_name: String,
-    column_names: Vec<String>, // Column names in the order they should be bound
-    pool: AnyPool, // Store the pool for reuse
+    column_names: Vec<String>,
+    pool: AnyPool,
     _phantom: PhantomData<T>,
 }
 
 impl<T: Send + Sync + 'static + Debug + SqlBindable> SqlWriter<T> {
-    // Creates a new SqlWriter. Requires DB connection, table, and column names.
+
     pub async fn new(connection_url: String, table_name: String, column_names: Vec<String>) -> Result<Self, SqlxError> {
         if column_names.is_empty() {
-            // Return an error or handle appropriately
-            // For now, let's assume columns are provided
+
+
              return Err(SqlxError::Configuration("Column names cannot be empty for SqlWriter".into()));
         }
         println!(
@@ -42,12 +42,12 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> SqlWriter<T> {
             table_name, connection_url, column_names
         );
         let pool_options = AnyPoolOptions::new()
-            .max_connections(10); // Adjust pool size, removed .connect_timeout()
+            .max_connections(10);
         let pool = pool_options.connect(&connection_url).await?;
         println!("[SqlWriter] Connected to database.");
 
         Ok(Self {
-            connection_url, // Keep for potential reconnect logic?
+            connection_url,
             table_name,
             column_names,
             pool,
@@ -55,12 +55,12 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> SqlWriter<T> {
         })
     }
 
-    // Helper to generate the INSERT SQL string
+
     fn generate_insert_sql(&self) -> String {
         let columns = self.column_names.join(", ");
-        // Generate placeholders (?, ?, ...) for AnyPool
-        // For specific databases like Postgres, placeholders are $1, $2, ...
-        // AnyPool should handle `?` correctly for supported DBs.
+
+
+
         let placeholders = self.column_names.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
         format!("INSERT INTO {} ({}) VALUES ({})", self.table_name, columns, placeholders)
     }
@@ -84,7 +84,7 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> Writer<T> for SqlWriter<T> 
             ).unwrap()
         );
 
-        let mut batch = Vec::with_capacity(100); // Example batch size
+        let mut batch = Vec::with_capacity(100);
         let batch_size = 100;
 
         while let Some(item) = rx.recv().await {
@@ -96,7 +96,7 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> Writer<T> for SqlWriter<T> 
                  println!("[SqlWriter] Writing batch of {} items...", current_batch.len());
                 for batch_item in current_batch {
                     let query = sqlx::query(&insert_sql);
-                    // Use the trait method to bind parameters
+
                     let bound_query = batch_item.bind_parameters(query);
                     bound_query.execute(&mut *transaction).await.map_err(|e| {
                         pb_items.abandon_with_message(format!("SQL Error: {}", e));
@@ -110,7 +110,7 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> Writer<T> for SqlWriter<T> 
             }
         }
 
-        // Write any remaining items in the last batch
+
         if !batch.is_empty() {
              let mut transaction = self.pool.begin().await?;
              println!("[SqlWriter] Writing final batch of {} items...", batch.len());
@@ -138,13 +138,13 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> Writer<T> for SqlWriter<T> 
             items_written
         );
         
-        // Pool is managed by self, no need to explicitly close here unless SqlWriter is dropped.
+
 
         Ok(())
     }
 }
 
-// Example implementation of SqlBindable for a hypothetical struct
+
 /*
 #[derive(Debug)]
 struct MyItem {

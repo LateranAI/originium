@@ -2,17 +2,17 @@ use crate::readers::Reader;
 use async_trait::async_trait;
 use memchr::memchr_iter;
 use rayon::prelude::*;
-use serde::de::DeserializeOwned; // Kept for consistency, actual parsing is in read_logic
+use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::fs::File as TokioFile; // Renamed to avoid conflict
+use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader as TokioBufReader};
 use tokio::sync::mpsc;
 use indicatif::{ProgressBar, ProgressStyle};
 
-// Renamed from FileReader struct conceptually, but keeping the name for now
+
 pub struct FileReader {
     path: String,
     num_threads: usize,
@@ -178,7 +178,7 @@ impl FileReader {
 #[async_trait]
 impl<Item> Reader<Item> for FileReader
 where
-    Item: DeserializeOwned + Send + Sync + 'static + Debug, // Actual parsing to Item is done by read_logic
+    Item: DeserializeOwned + Send + Sync + 'static + Debug,
 {
     async fn pipeline(
         &self,

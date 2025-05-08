@@ -42,7 +42,7 @@ impl Trie {
             }
             match &mut node.children[index_a][index_b] {
                 Some(next_node) => node = next_node,
-                None => unreachable!(),  // We've just checked that it's not None
+                None => unreachable!(),
             }
         }
         node.id = id

@@ -2,13 +2,13 @@ use crate::readers::Reader;
 use async_trait::async_trait;
 use memchr::memchr_iter;
 use rayon::prelude::*;
-use serde::de::DeserializeOwned; // Kept for consistency, actual parsing is in read_logic
+use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader as TokioBufReader}; // Renamed to avoid conflict if std::io::BufReader is used
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader as TokioBufReader};
 use tokio::sync::mpsc;
 use indicatif::{ProgressBar, ProgressStyle};
 
@@ -20,7 +20,7 @@ pub struct TsvReader {
 impl TsvReader {
     pub fn new(path: String) -> Self {
         let num_threads = num_cpus::get();
-        // Using println! as log macros were removed
+
         println!(
             "[TsvReader] Using {} threads for parallel reading.",
             num_threads
@@ -28,8 +28,8 @@ impl TsvReader {
         Self { path, num_threads }
     }
 
-    // Scans the file to find byte offsets for the start of each line.
-    // This is crucial for enabling parallel processing of the file by different threads.
+
+
     fn scan_line_offsets(&self) -> Arc<Vec<u64>> {
         let file_path = Path::new(&self.path);
         let file_size = match std::fs::metadata(file_path) {
@@ -54,7 +54,7 @@ impl TsvReader {
 
         let chunk_size = (file_size + self.num_threads as u64 - 1) / self.num_threads as u64;
 
-        // Parallel iteration over chunks of the file
+
         let offsets_vec: Vec<Vec<u64>> = (0..self.num_threads)
             .into_par_iter()
             .map(|i| {
@@ -63,9 +63,9 @@ impl TsvReader {
                 if end > file_size {
                     end = file_size;
                 }
-                // If chunk is zero-size or invalid, return empty offsets for this chunk
+
                 if start >= end {
-                    pb_scan.inc(end.saturating_sub(start)); // Ensure progress bar reflects scanned empty part
+                    pb_scan.inc(end.saturating_sub(start));
                     return Vec::new();
                 }
 
@@ -74,23 +74,23 @@ impl TsvReader {
                     Ok(file) => file,
                     Err(e) => {
                         eprintln!("[TsvReader] Failed to open file in scan thread (path: {}): {}", self.path, e);
-                        return Vec::new(); // Return empty if file can't be opened
+                        return Vec::new();
                     }
                 };
-                let mut current_pos = start; // The current byte position in the file
-                let mut bytes_processed_in_chunk_segment = 0; // For pb_scan.inc
+                let mut current_pos = start;
+                let mut bytes_processed_in_chunk_segment = 0;
 
-                // If not the first chunk, adjust `current_pos` to the start of the next line
+
                 if start != 0 {
                     if let Err(e) = f.seek(SeekFrom::Start(start)) {
                         eprintln!("[TsvReader] Seek failed in scan thread (path: {}, offset: {}): {}", self.path, start, e);
                         return Vec::new();
                     }
-                    let mut buffer = [0; 1024]; // Read in reasonably sized blocks
+                    let mut buffer = [0; 1024];
                     loop {
                         match f.read(&mut buffer) {
-                            Ok(0) => { // EOF reached before finding newline or end of chunk
-                                bytes_processed_in_chunk_segment = end.saturating_sub(current_pos); // count remaining part as processed
+                            Ok(0) => {
+                                bytes_processed_in_chunk_segment = end.saturating_sub(current_pos);
                                 current_pos = end; 
                                 break;
                             }
@@ -101,7 +101,7 @@ impl TsvReader {
                                     break;
                                 } else {
                                     current_pos += n as u64;
-                                    if current_pos >= end { // Reached end of designated chunk without newline
+                                    if current_pos >= end {
                                         bytes_processed_in_chunk_segment = end - start;
                                         break;
                                     }
@@ -109,27 +109,27 @@ impl TsvReader {
                             }
                             Err(e) => {
                                 eprintln!("[TsvReader] Error reading during offset adjustment (path: {}): {}", self.path, e);
-                                pb_scan.inc(end.saturating_sub(start)); // Assume rest of chunk is problematic but scanned
+                                pb_scan.inc(end.saturating_sub(start));
                                 return Vec::new();
                             }
                         }
                     }
-                    if current_pos >= end { // If adjustment pushed us past the chunk end
+                    if current_pos >= end {
                         pb_scan.inc(bytes_processed_in_chunk_segment.min(end.saturating_sub(start)));
-                        return local_offsets; // No processable lines in this adjusted segment
+                        return local_offsets;
                     }
                 } else {
-                    // First chunk always starts at offset 0
+
                     local_offsets.push(0);
                 }
 
-                // Read the effective chunk for this thread
+
                 if let Err(e) = f.seek(SeekFrom::Start(current_pos)) {
                      eprintln!("[TsvReader] Seek failed before reading effective chunk (path: {}, offset: {}): {}", self.path, current_pos, e);
                      pb_scan.inc(end.saturating_sub(current_pos));
                      return local_offsets;
                 }
-                let mut chunk_buf = Vec::with_capacity((end - current_pos).min(file_size - current_pos) as usize); // Ensure capacity is not negative or overflowing
+                let mut chunk_buf = Vec::with_capacity((end - current_pos).min(file_size - current_pos) as usize);
                 
                 let bytes_to_read_in_effective_chunk = end.saturating_sub(current_pos);
                 
@@ -137,19 +137,19 @@ impl TsvReader {
                     Ok(bytes_actually_read) => {
                         for idx in memchr_iter(b'\n', &chunk_buf[..bytes_actually_read]) {
                             let offset_in_file = current_pos + idx as u64 + 1;
-                            // Only add offset if it's within the current thread's designated chunk boundary (end)
-                            // This prevents adding an offset that belongs to the very start of the next chunk
+
+
                             if offset_in_file < end { 
                                 local_offsets.push(offset_in_file);
                             } else {
-                                break; // Found newline at/after chunk boundary
+                                break;
                             }
                         }
                          pb_scan.inc(bytes_actually_read as u64 + bytes_processed_in_chunk_segment);
                     }
                     Err(e) => {
                         eprintln!("[TsvReader] Failed to read effective chunk into buffer (path: {}): {}", self.path, e);
-                        pb_scan.inc(bytes_to_read_in_effective_chunk); // Assume this part was "scanned" even if error
+                        pb_scan.inc(bytes_to_read_in_effective_chunk);
                     }
                 }
                 local_offsets
@@ -162,15 +162,15 @@ impl TsvReader {
             offsets_vec.iter().map(|v| v.len()).sum::<usize>()
         ));
 
-        // Combine and sort offsets from all threads
+
         let mut combined_offsets: Vec<u64> = offsets_vec.into_iter().flatten().collect();
         
-        // Ensure 0 is present if the file is not empty and offsets were found, or if it's the only offset.
+
         if file_size > 0 && (!combined_offsets.contains(&0) ) {
             let mut has_content_implying_lines = false;
-            if !combined_offsets.is_empty() { // if any offsets were found at all
+            if !combined_offsets.is_empty() {
                  has_content_implying_lines = true;
-            } else { // if no newlines were found, but file has content, it's a single line file
+            } else {
                 let mut f_check = std::fs::File::open(file_path).unwrap();
                 let mut buf_check = [0;1];
                 if f_check.read(&mut buf_check).unwrap_or(0) > 0 {
@@ -192,13 +192,13 @@ impl TsvReader {
 #[async_trait]
 impl<Item> Reader<Item> for TsvReader
 where
-    Item: DeserializeOwned + Send + Sync + 'static + Debug, // DeserializeOwned for consistency with Task read_logic
+    Item: DeserializeOwned + Send + Sync + 'static + Debug,
 {
     async fn pipeline(
         &self,
         read_logic: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
     ) -> mpsc::Receiver<Item> {
-        let (tx, rx) = mpsc::channel(self.num_threads * 100); // Buffer size based on num_threads
+        let (tx, rx) = mpsc::channel(self.num_threads * 100);
         let file_path_str = self.path.clone();
         let parser = Arc::new(read_logic);
 
@@ -206,14 +206,14 @@ where
         
         let num_actual_lines_to_process = if line_offsets.is_empty() {
             0
-        } else if line_offsets.len() == 1 { // Single offset [0] means one line (or empty file if size is 0)
+        } else if line_offsets.len() == 1 {
             match std::fs::metadata(&file_path_str) {
                 Ok(meta) if meta.len() > 0 => 1,
                 _ => 0,
             }
         } else {
-            line_offsets.len() // Number of segments is effectively the number of starting offsets found.
-                               // Each offset marks the beginning of a line to be processed.
+            line_offsets.len()
+
         };
 
 
@@ -223,13 +223,13 @@ where
             } else {
                  println!("[TsvReader] File has content but effectively zero processable line segments based on offsets: {}. Offsets: {:?}. Lines to process: {}", file_path_str, line_offsets, num_actual_lines_to_process);
             }
-            drop(tx); // Close channel if no work
+            drop(tx);
             return rx;
         }
         
         let file_size = match std::fs::metadata(&file_path_str) {
              Ok(meta) => meta.len(),
-             Err(_) => { // Should have been caught by scan_line_offsets, but as a safeguard
+             Err(_) => {
                 eprintln!("[TsvReader] Failed to get file metadata for processing: {}", file_path_str);
                 drop(tx); return rx;
              }
@@ -243,7 +243,7 @@ where
         );
 
         let mut handles = vec![];
-        // Calculate the ideal number of lines per thread.
+
         let lines_per_thread_ideal = (num_actual_lines_to_process + self.num_threads - 1) / self.num_threads;
 
         for i in 0..self.num_threads {
@@ -253,14 +253,14 @@ where
             let offsets_clone = Arc::clone(&line_offsets);
             let pb_clone = pb_process.clone();
 
-            // Determine the range of line *indices* (into the offsets_clone Vec) this thread will handle
+
             let start_line_idx_in_offsets_vec = i * lines_per_thread_ideal;
             let mut end_line_idx_in_offsets_vec = (i + 1) * lines_per_thread_ideal;
             
             if start_line_idx_in_offsets_vec >= num_actual_lines_to_process {
-                continue; // No lines for this thread
+                continue;
             }
-            // Ensure the last thread processes all remaining lines
+
             if i == self.num_threads - 1 {
                 end_line_idx_in_offsets_vec = num_actual_lines_to_process;
             }
@@ -268,30 +268,30 @@ where
 
 
             if start_line_idx_in_offsets_vec >= end_line_idx_in_offsets_vec {
-                continue; // Should not happen if logic above is correct, but safeguard
+                continue;
             }
             
             handles.push(tokio::spawn(async move {
-                // actual_start_line_index is an index into the offsets_clone vector
+
                 let actual_start_line_index_in_offsets = start_line_idx_in_offsets_vec;
-                // actual_end_line_exclusive_index_in_offsets is also an index for the *next* line's start offset
+
                 let actual_end_line_exclusive_index_in_offsets = end_line_idx_in_offsets_vec;
 
-                // Get the byte offset for the start of the first line this thread handles
+
                 let start_byte_offset = offsets_clone[actual_start_line_index_in_offsets];
                 
-                // Determine the end byte offset for this thread's chunk
-                // If this thread processes up to the last line of the file, its chunk ends at EOF.
-                // Otherwise, its chunk ends at the start of the first line the *next* thread would process.
+
+
+
                 let end_byte_offset = if actual_end_line_exclusive_index_in_offsets >= offsets_clone.len() {
-                    file_size // This thread reads to the end of the file
+                    file_size
                 } else {
                     offsets_clone[actual_end_line_exclusive_index_in_offsets]
                 };
 
-                if start_byte_offset >= end_byte_offset && !(start_byte_offset == end_byte_offset && start_byte_offset == file_size && file_size == 0) { // Allow empty file case
-                    // This condition implies an empty segment or an issue with offset calculation.
-                    // pb_clone.println(format!("[TsvReader {}] Empty or invalid byte range: {}-{}", i, start_byte_offset, end_byte_offset));
+                if start_byte_offset >= end_byte_offset && !(start_byte_offset == end_byte_offset && start_byte_offset == file_size && file_size == 0) {
+
+
                     return;
                 }
                 
@@ -308,30 +308,30 @@ where
                      return;
                 }
                 
-                // Limit the reading to the calculated chunk size for this thread
+
                 let chunk_size_for_thread = end_byte_offset - start_byte_offset;
                 let chunk_reader = file.take(chunk_size_for_thread);
-                let buf_reader_async = TokioBufReader::new(chunk_reader); // Use renamed import
+                let buf_reader_async = TokioBufReader::new(chunk_reader);
                 let mut lines_stream = buf_reader_async.lines();
 
-                // Iterate through lines within this thread's assigned chunk
+
                 for line_num_in_thread_chunk in actual_start_line_index_in_offsets..actual_end_line_exclusive_index_in_offsets {
                      match lines_stream.next_line().await {
                         Ok(Some(line_content)) => {
                             let item = parser_clone(line_content);
                             if tx_clone.send(item).await.is_err() {
                                 pb_clone.println(format!("[TsvReader {}] Receiver dropped. Worker stopping.", i));
-                                break; // Stop processing if receiver is gone
+                                break;
                             }
                             pb_clone.inc(1);
                         }
                         Ok(None) => { 
-                            // End of lines in this chunk, as expected if it's the last chunk or lines perfectly aligned
+
                             break; 
                         }
                         Err(e) => {
                             pb_clone.println(format!("[TsvReader {}] Error reading line {}(offset {}): {}", i, line_num_in_thread_chunk, offsets_clone[line_num_in_thread_chunk], e));
-                            // Optionally decide to continue or break based on error
+
                             break; 
                         }
                     }
@@ -339,21 +339,21 @@ where
             }));
         }
 
-        drop(tx); // Drop the original sender, channel closes when all workers (& clones) are done
+        drop(tx);
 
-        // Spawn a task to await all worker handles and finalize the progress bar
+
         tokio::spawn(async move {
             for handle in handles {
                 if let Err(e) = handle.await {
-                     // Using eprintln directly as pb might be finished by other means or not accessible here easily
+
                      eprintln!("[TsvReader] Worker thread panicked: {:?}", e);
                 }
             }
-            if !pb_process.is_finished() { // Check if not already finished due to some error path
+            if !pb_process.is_finished() {
                 pb_process.finish_with_message(format!("[TsvReader] All worker threads finished processing lines for {}.", file_path_str));
             }
         });
 
-        rx // Return the receiver for the main task to consume items
+        rx
     }
 } 

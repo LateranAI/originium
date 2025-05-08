@@ -6,13 +6,13 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-/// Represents a single record read from a Fasta/Fastq file.
-/// Uses Vec<u8> to avoid potentially invalid UTF-8 in sequences or IDs.
+
+
 #[derive(Debug, Clone)]
 pub struct FastaRecord {
     pub id: Vec<u8>,
     pub seq: Vec<u8>,
-    // Optional: pub qual: Option<Vec<u8>> for Fastq support?
+
 }
 
 pub struct FastaReader {
@@ -32,15 +32,15 @@ impl FastaReader {
 #[async_trait]
 impl<Item> Reader<Item> for FastaReader
 where
-    // Task::InputItem needs to be constructible from FastaRecord
-    // Typically, read_logic will handle this conversion.
-    // The type constraint reflects the *output* of the pipeline channel.
+
+
+
     Item: Send + Sync + 'static + Debug, 
-    // We constrain read_logic input internally
+
 {
     async fn pipeline(
         &self,
-        // Now expects read_logic to take String (the sequence)
+
         read_logic: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(100);
@@ -70,10 +70,10 @@ where
             while let Some(record_result) = reader.next() {
                 match record_result {
                     Ok(record) => {
-                        // Convert sequence Vec<u8> to String before passing to read_logic
+
                         let seq_string = String::from_utf8_lossy(&record.seq()).to_string();
                         
-                        // Now call read_logic with the sequence String
+
                         let item = parser(seq_string);
                         
                         if tx.blocking_send(item).is_err() {
