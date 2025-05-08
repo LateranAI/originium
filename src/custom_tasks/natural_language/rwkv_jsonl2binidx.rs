@@ -2,12 +2,11 @@ use crate::custom_tasks::{DataEndpoint, Task, Writer, FrameworkError};
 use crate::utils::tokenizer::Tokenizer;
 use crate::writers::rwkv_binidx::{BinidxItem, RwkvBinidxWriter};
 use crate::writers::debug::DebugWriter;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json;
 use std::sync::Arc;
-use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TextRecord {
     pub text: String,
 }
@@ -76,9 +75,9 @@ impl Task for TaskRwkvJsonlBindix {
             DataEndpoint::RwkvBinidx { base_path, filename_prefix, num_threads } => {
                 println!("Configuring RwkvBinidxWriter for output.");
                 let writer = RwkvBinidxWriter::new(
-                    Path::new(base_path),
-                    filename_prefix,
-                    *num_threads,
+                    base_path.clone(), 
+                    filename_prefix.clone(), 
+                    *num_threads
                 ).map_err(|e| FrameworkError::ComponentBuildError {
                     component_type: "RwkvBinidxWriter".to_string(),
                     endpoint_description: format!("{:?}", endpoint_config),
@@ -89,14 +88,14 @@ impl Task for TaskRwkvJsonlBindix {
             DataEndpoint::Debug { prefix } => {
                 println!("Configuring DebugWriter for output.");
                 let writer = match prefix {
-                    Some(p) => DebugWriter::<Self::ProcessedItem>::with_prefix(p),
+                    Some(p) => DebugWriter::<Self::ProcessedItem>::with_prefix(p.as_str()),
                     None => DebugWriter::<Self::ProcessedItem>::new(),
                 };
                 Ok(Box::new(writer))
             }
             _ => Err(FrameworkError::UnsupportedEndpointType {
                 endpoint_description: format!("{:?}", endpoint_config),
-                operation_description: format!("Writer creation in TaskRwkvJsonlBindix for ProcessedItem type BinidxItem"),
+                operation_description: "get_writer in TaskRwkvJsonlBindix".to_string(),
             }),
         }
     }

@@ -4,8 +4,10 @@ mod natural_language;
 use crate::errors::FrameworkError;
 
 use serde::Deserialize;
-use std::fmt::Debug;
-use std::path::Path;
+use std::fmt::{Debug, Display};
+
+// use sqlx::FromRow; // No longer needed here
+// use sqlx::any::AnyRow; // No longer needed here
 
 use crate::readers::Reader;
 use crate::writers::Writer;
@@ -18,14 +20,19 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::readers::jsonl::JsonlReader;
-use crate::writers::redis::RedisWriter;
+use crate::readers::line_reader::FileReader;
+use crate::readers::xml::XmlReader;
+use crate::readers::fasta::FastaReader;
+// use crate::readers::sql::SqlReader; // Commented out as SqlReader usage is disabled
 
-use crate::custom_tasks::protein_language::ncbi_nr_softlabels_jsonl2redis::RedisKVPair;
+// use crate::writers::xml::XmlWriter; // Unused import
+// use crate::writers::fasta::FastaWriter; // Unused import
+// use crate::writers::sql::{SqlWriter, SqlBindable}; // Unused imports
 
 #[async_trait::async_trait]
 pub trait Task: Send + Sync + 'static {
-    type InputItem: Send + Sync + 'static + Debug + Clone + DeserializeOwned;
-    type ProcessedItem: Send + Sync + 'static + Debug + Clone + Serialize;
+    type InputItem: Send + Sync + 'static + Debug + Clone + DeserializeOwned + Unpin;
+    type ProcessedItem: Send + Sync + 'static + Debug + Clone + Serialize + Display;
 
     fn get_inputs_info() -> Vec<DataEndpoint>;
     fn get_outputs_info() -> Vec<DataEndpoint>;
@@ -57,6 +64,34 @@ pub trait Task: Send + Sync + 'static {
             let reader_instance: Box<dyn Reader<Self::InputItem>> = match &input_config {
                 DataEndpoint::Jsonl { path } => {
                     Box::new(JsonlReader::new(path.clone()))
+                }
+                DataEndpoint::File { path } => {
+                    Box::new(FileReader::new(path.clone()))
+                }
+                DataEndpoint::Xml { path } => {
+                    let record_tag = "record".to_string();
+                    Box::new(XmlReader::new(path.clone(), record_tag))
+                }
+                DataEndpoint::Fasta { path } => {
+                    Box::new(FastaReader::new(path.clone()))
+                }
+                DataEndpoint::Postgres { url: _url, table: _table } => {
+                    // let query = format!("SELECT * FROM {}", table);
+                    // Box::new(SqlReader::<Self::InputItem>::new(url.clone(), query))
+                    // Temporarily commented out to allow compilation without global FromRow
+                    return Err(FrameworkError::UnsupportedEndpointType {
+                        endpoint_description: format!("SQL Reader (Postgres) for {:?} pending FromRow solution for Task::InputItem", input_config),
+                        operation_description: "Automated reader creation in Task::run".to_string(),
+                    });
+                }
+                DataEndpoint::MySQL { url: _url, table: _table } => {
+                    // let query = format!("SELECT * FROM {}", table);
+                    // Box::new(SqlReader::<Self::InputItem>::new(url.clone(), query))
+                    // Temporarily commented out to allow compilation without global FromRow
+                    return Err(FrameworkError::UnsupportedEndpointType {
+                        endpoint_description: format!("SQL Reader (MySQL) for {:?} pending FromRow solution for Task::InputItem", input_config),
+                        operation_description: "Automated reader creation in Task::run".to_string(),
+                    });
                 }
                 _ => {
                     return Err(FrameworkError::UnsupportedEndpointType {

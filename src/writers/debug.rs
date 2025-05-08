@@ -1,5 +1,4 @@
 use crate::writers::Writer;
-use async_trait::async_trait;
 use std::error::Error;
 use std::fmt::Debug;
 use std::marker::PhantomData;

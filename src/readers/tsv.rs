@@ -243,7 +243,7 @@ where
         );
 
         let mut handles = vec![];
-        // Calculate lines per thread more carefully for the last thread
+        // Calculate the ideal number of lines per thread.
         let lines_per_thread_ideal = (num_actual_lines_to_process + self.num_threads - 1) / self.num_threads;
 
         for i in 0..self.num_threads {
@@ -255,7 +255,7 @@ where
 
             // Determine the range of line *indices* (into the offsets_clone Vec) this thread will handle
             let start_line_idx_in_offsets_vec = i * lines_per_thread_ideal;
-            let mut end_line_idx_in_offsets_vec = ((i + 1) * lines_per_thread_ideal);
+            let mut end_line_idx_in_offsets_vec = (i + 1) * lines_per_thread_ideal;
             
             if start_line_idx_in_offsets_vec >= num_actual_lines_to_process {
                 continue; // No lines for this thread

@@ -142,3 +142,12 @@ pub struct RedisKVPair {
     pub key: String,
     pub value: String,
 }
+
+// Implement Display for RedisKVPair
+impl std::fmt::Display for RedisKVPair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Define how RedisKVPair should be displayed as a string.
+        // Example: "key -> value". Adjust format as needed.
+        write!(f, "{} -> {}", self.key, self.value)
+    }
+}
