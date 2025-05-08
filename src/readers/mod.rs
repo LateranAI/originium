@@ -1,4 +1,5 @@
 pub mod jsonl;
+pub mod tsv;
 
 use std::fmt::Debug;
 use tokio::sync::mpsc;
