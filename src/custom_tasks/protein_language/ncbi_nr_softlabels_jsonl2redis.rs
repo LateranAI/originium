@@ -1,4 +1,4 @@
-use crate::custom_tasks::{DataEndpoint, FrameworkError, Task, Writer};
+use crate::custom_tasks::{DataEndpoint, FrameworkError, Task, Writer, LineFormat};
 use crate::writers::redis::RedisWriter;
 use std::fmt::Display;
 
@@ -36,9 +36,10 @@ impl Task for TaskNcbiNrSoftlabelsJsonl2Redis {
     type ProcessedItem = RedisKVPair;
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
-        vec![DataEndpoint::Jsonl {
+        vec![DataEndpoint::LineDelimited {
             path: "/public/home/ssjxzkz/Datasets/prot/ncbi_nr/processed/nr.softlabel.jsonl"
                 .to_string(),
+            format: LineFormat::Jsonl,
         }]
     }
 

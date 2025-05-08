@@ -20,10 +20,16 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::readers::fasta::FastaReader;
-use crate::readers::jsonl::JsonlReader;
-use crate::readers::line_reader::FileReader;
 use crate::readers::sql::SqlReader;
 use crate::readers::xml::XmlReader;
+
+// Define LineFormat enum
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LineFormat {
+    Jsonl,
+    Tsv,
+    PlainText,
+}
 
 #[async_trait::async_trait]
 pub trait Task: Send + Sync + 'static {
@@ -69,8 +75,9 @@ pub trait Task: Send + Sync + 'static {
 
         for input_config in input_configs {
             let reader_instance: Box<dyn Reader<Self::InputItem>> = match &input_config {
-                DataEndpoint::Jsonl { path } => Box::new(JsonlReader::new(path.clone())),
-                DataEndpoint::File { path } => Box::new(FileReader::new(path.clone())),
+                DataEndpoint::LineDelimited { path, format } => {
+                    Box::new(crate::readers::line_reader::LineReader::new(path.clone(), format.clone()))
+                }
                 DataEndpoint::Xml { path } => {
                     let record_tag = "record".to_string();
                     Box::new(XmlReader::new(path.clone(), record_tag))
@@ -110,9 +117,9 @@ pub trait Task: Send + Sync + 'static {
                         operation_description: "Automated reader creation in Task::run".to_string(),
                     });
                 }
-                _ => {
+                DataEndpoint::Debug { .. } => {
                     return Err(FrameworkError::UnsupportedEndpointType {
-                        endpoint_description: format!("{:?}", input_config),
+                        endpoint_description: format!("Debug endpoint cannot be used as a direct reader source in this factory version."),
                         operation_description: "Automated reader creation in Task::run".to_string(),
                     });
                 }
@@ -268,17 +275,14 @@ pub trait Task: Send + Sync + 'static {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "type")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DataEndpoint {
     Debug {
         prefix: Option<String>,
     },
-    File {
+    LineDelimited {
         path: String,
-    },
-    Jsonl {
-        path: String,
+        format: LineFormat,
     },
     Xml {
         path: String,
@@ -307,22 +311,6 @@ pub enum DataEndpoint {
 }
 
 impl DataEndpoint {
-    pub fn unwrap_file(&self) -> String {
-        if let DataEndpoint::File { path } = self {
-            path.clone()
-        } else {
-            panic!("Called unwrap_file() on non-File endpoint");
-        }
-    }
-
-    pub fn unwrap_jsonl(&self) -> String {
-        if let DataEndpoint::Jsonl { path } = self {
-            path.clone()
-        } else {
-            panic!("Called unwrap_jsonl() on non-Jsonl endpoint");
-        }
-    }
-
     pub fn unwrap_xml(&self) -> String {
         if let DataEndpoint::Xml { path } = self {
             path.clone()

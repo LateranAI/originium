@@ -1,4 +1,4 @@
-use crate::custom_tasks::{DataEndpoint, FrameworkError, Task, Writer};
+use crate::custom_tasks::{DataEndpoint, FrameworkError, Task, Writer, LineFormat};
 use crate::utils::tokenizer::Tokenizer;
 use crate::writers::debug::DebugWriter;
 use crate::writers::rwkv_binidx::{BinidxItem, RwkvBinidxWriter};
@@ -35,8 +35,9 @@ impl Task for TaskRwkvJsonlBindix {
     type ProcessedItem = BinidxItem;
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
-        vec![DataEndpoint::Jsonl {
+        vec![DataEndpoint::LineDelimited {
             path: "./data/input.jsonl".to_string(),
+            format: LineFormat::Jsonl,
         }]
     }
 

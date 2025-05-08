@@ -1,5 +1,3 @@
-pub mod jsonl;
-pub mod tsv;
 pub mod line_reader;
 pub mod xml;
 pub mod fasta;
