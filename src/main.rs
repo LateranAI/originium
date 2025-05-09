@@ -1,3 +1,4 @@
+use crate::custom_tasks::protein_language::ncbi_nr_singletons_tsv2redis::TaskNcbiNrSingletonsTsvToRedis;
 use crate::custom_tasks::protein_language::ncbi_nr_softlabels_jsonl2redis::TaskNcbiNrSoftlabelsJsonl2Redis;
 use crate::custom_tasks::Task;
 
@@ -12,7 +13,7 @@ const TEST_MODE: bool = false;
 #[tokio::main]
 async fn main() {
     println!("Tasks start!");
-    let task = TaskNcbiNrSoftlabelsJsonl2Redis::new();
+    let task = TaskNcbiNrSingletonsTsvToRedis::new().await.unwrap();
     if let Err(e) = task.run().await {
         eprintln!("Task execution failed: {:?}", e);
     }
