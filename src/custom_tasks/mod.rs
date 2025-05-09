@@ -22,11 +22,19 @@ use num_cpus;
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::readers::fasta::FastaReader;
 use crate::readers::sql::SqlReader;
 use crate::readers::xml::XmlReader;
 
+const ADJUSTMENT_BATCH_SIZE: u32 = 100;
+
+#[derive(Clone, Copy, Debug)]
+struct PerfRecord {
+    duration: Duration,
+    concurrency: usize,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LineFormat {
@@ -85,8 +93,10 @@ pub trait Task: Clone + Send + Sync + 'static {
             mpsc::channel::<Self::InputItem>(100);
         let mut reader_handles = FuturesUnordered::new();
 
+        let total_items_read_to_broker_for_readers = Arc::clone(&total_items_read_to_broker);
+
         {
-            let items_counter_clone_for_reader = Arc::clone(&total_items_read_to_broker);
+            let items_counter_clone_for_reader = Arc::clone(&total_items_read_to_broker_for_readers);
             for input_config in input_configs {
                 let reader_instance: Box<dyn Reader<Self::InputItem>> = match &input_config {
                     DataEndpoint::LineDelimited { path, format } => Box::new(
@@ -174,7 +184,12 @@ pub trait Task: Clone + Send + Sync + 'static {
 
         println!("All reader pipelines configured and forwarding tasks spawned.");
 
-        let mut processing_handles =
+        // Handles for transformation tasks that return a count of processed items.
+        let mut transform_handles =
+            FuturesUnordered::<JoinHandle<Result<usize, FrameworkError>>>::new();
+        
+        // Handles for writer tasks that complete without a specific item count (Result<(), FrameworkError>).
+        let mut writer_completion_handles = 
             FuturesUnordered::<JoinHandle<Result<(), FrameworkError>>>::new();
 
         if output_configs.is_empty() {
@@ -188,7 +203,6 @@ pub trait Task: Clone + Send + Sync + 'static {
             let mut transform_targets = Vec::new();
 
             let transform_targets_for_closure = transform_targets.clone();
-            let successfully_processed_counter_clone = Arc::clone(&total_items_successfully_processed);
 
             for output_config in &output_configs {
                 let writer_instance = self.get_writer(output_config).await?;
@@ -207,7 +221,8 @@ pub trait Task: Clone + Send + Sync + 'static {
                         })
                 });
 
-                processing_handles.push(writer_handle);
+                // Add writer_handle to its specific collection.
+                writer_completion_handles.push(writer_handle);
 
                 transform_targets.push((output_config.clone(), tx_to_writer));
             }
@@ -215,88 +230,185 @@ pub trait Task: Clone + Send + Sync + 'static {
             let task_processor = self.clone();
             
             let num_cpu_cores = num_cpus::get();
-            let max_concurrent_processing_ops: usize = env::var("MAX_CONCURRENT_PROCESS_OPS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or_else(|| {
-                    let default_ops = num_cpu_cores.saturating_mul(4).max(1);
-                    println!("[Task::run] MAX_CONCURRENT_PROCESS_OPS not set or invalid, defaulting to {} ({} cores * 4)", default_ops, num_cpu_cores);
-                    default_ops
-                });
+            println!(
+                "[Task::run] Initializing transform and dispatch stage. Dynamic concurrency enabled. Base CPU cores: {}.", 
+                num_cpu_cores
+            );
 
             let transform_and_dispatch_handle = tokio::spawn(async move {
                 let mut active_processing_tasks = FuturesUnordered::new();
-                let items_picked_up_for_processing = Arc::new(AtomicUsize::new(0));
+                
+                let task_processor_arc = Arc::new(task_processor); 
+                
+                let mut processed_and_sent_count: usize = 0; 
 
+                let current_transform_targets = transform_targets_for_closure;
+
+                let initial_concurrency = num_cpus::get().max(1);
+                let min_concurrency = (initial_concurrency / 2).max(1);
+                let max_concurrency = initial_concurrency * 8;
+    
+                let mut current_max_concurrency = initial_concurrency.clamp(min_concurrency, max_concurrency);
+                let mut items_processed_current_adjustment_batch: u32 = 0;
+                let mut adjustment_batch_start_time = Instant::now();
+                let mut previous_perf_record: Option<PerfRecord> = None;
+                let mut dynamic_adjustment_enabled: bool = true;
+    
+                let task_name = "ProcessingStage"; 
+
+                println!(
+                    "[Task: {}] Initializing dynamic concurrency. Start: {}, Min: {}, Max: {}",
+                    task_name, current_max_concurrency, min_concurrency, max_concurrency
+                );
+    
                 loop {
                     tokio::select! {
                         biased;
 
-                        Some(join_result) = active_processing_tasks.next(), if !active_processing_tasks.is_empty() => {
-                            match join_result {
-                                Ok(process_result) => {
-                                    match process_result {
-                                        Ok(Some(generic_output_item)) => {
-                                            let output_item: <Self as Task>::ProcessedItem = generic_output_item;
-                                            let mut sent_to_at_least_one_writer = false;
-                                            for (_output_config, writer_tx) in &transform_targets_for_closure {
-                                                let item_to_send = output_item.clone();
-                                                match writer_tx.send(item_to_send).await {
-                                                    Ok(()) => { sent_to_at_least_one_writer = true; /* Successfully sent */ }
-                                                    Err(_send_error) => {
-                                                        let err_msg = format!("Writer channel closed for output {:?}. Cannot send item.", _output_config);
-                                                        eprintln!("FrameworkError: {}", err_msg);
-                                                        return Err(FrameworkError::ChannelSendError {
-                                                            channel_description: format!("Writer channel for output {:?}", _output_config),
-                                                            error_message: "Receiver dropped or writer task failed".to_string(),
-                                                        });
-                                                    }
-                                                }
-                                            }
-                                            if sent_to_at_least_one_writer {
-                                                successfully_processed_counter_clone.fetch_add(1, AtomicOrdering::Relaxed);
-                                            }
+                        Some(processed_result_from_join) = active_processing_tasks.next(), if !active_processing_tasks.is_empty() => {
+                            match processed_result_from_join {
+                                Ok(Ok(Some(output_item))) => {
+                                    let mut sent_to_at_least_one_writer = false;
+                                    
+                                    let concrete_output_item: <Self as Task>::ProcessedItem = output_item;
+                                    let item_for_sending: <Self as Task>::ProcessedItem = concrete_output_item.clone();
+
+                                    for (_output_config, writer_tx) in &current_transform_targets {
+                                        if writer_tx.send(item_for_sending.clone()).await.is_err() {
+                                            eprintln!(
+                                                "[Task: {}] Receiver for writer {:?} dropped.", 
+                                                task_name, _output_config
+                                            );
+                                        } else {
+                                            sent_to_at_least_one_writer = true;
                                         }
-                                        Ok(None) => { /* Task::process returned Ok(None), item successfully skipped */ }
-                                        Err(process_framework_error) => {
-                                            eprintln!("FrameworkError from Task::process: {:?}. Aborting.", process_framework_error);
-                                            return Err(process_framework_error);
+                                    }
+    
+                                    if sent_to_at_least_one_writer {
+                                        processed_and_sent_count += 1;
+                                        items_processed_current_adjustment_batch += 1;
+    
+                                        if dynamic_adjustment_enabled && items_processed_current_adjustment_batch >= ADJUSTMENT_BATCH_SIZE {
+                                            let current_batch_duration = adjustment_batch_start_time.elapsed();
+                                            let concurrency_during_this_batch = current_max_concurrency;
+                                            
+                                            let current_perf = PerfRecord {
+                                                duration: current_batch_duration,
+                                                concurrency: concurrency_during_this_batch,
+                                            };
+    
+                                            if let Some(prev_perf) = previous_perf_record {
+                                                let prev_rate = ADJUSTMENT_BATCH_SIZE as f64 / prev_perf.duration.as_secs_f64().max(f64::EPSILON);
+                                                let current_rate = ADJUSTMENT_BATCH_SIZE as f64 / current_batch_duration.as_secs_f64().max(f64::EPSILON);
+                                                let old_concurrency_for_log = current_max_concurrency;
+    
+                                                if current_rate > prev_rate * 1.10 {
+                                                    current_max_concurrency = (current_max_concurrency * 2).clamp(min_concurrency, max_concurrency);
+                                                    println!(
+                                                        "[Task: {}] Concurrency increased: {} -> {} (Rate: {:.2}items/s vs {:.2}items/s @ {} tasks).",
+                                                        task_name, old_concurrency_for_log, current_max_concurrency, current_rate, prev_rate, prev_perf.concurrency
+                                                    );
+                                                } else if current_rate < prev_rate * 0.90 {
+                                                    let increase_amount = if concurrency_during_this_batch > prev_perf.concurrency {
+                                                        concurrency_during_this_batch - prev_perf.concurrency
+                                                    } else {
+                                                        0
+                                                    };
+    
+                                                    if increase_amount > 0 {
+                                                        let reduction_amount = increase_amount / 2;
+                                                        current_max_concurrency = (prev_perf.concurrency + reduction_amount).clamp(min_concurrency, max_concurrency);
+                                                    } else {
+                                                        current_max_concurrency = (current_max_concurrency * 3 / 4).clamp(min_concurrency, max_concurrency);
+                                                    }
+                                                    println!(
+                                                        "[Task: {}] Concurrency decreased: {} -> {} (Rate: {:.2}items/s vs {:.2}items/s @ {} tasks).",
+                                                        task_name, old_concurrency_for_log, current_max_concurrency, current_rate, prev_rate, prev_perf.concurrency
+                                                    );
+                                                } else {
+                                                    dynamic_adjustment_enabled = false;
+                                                    println!(
+                                                        "[Task: {}] Concurrency stable at {}. Locking. (Rate: {:.2}items/s vs {:.2}items/s @ {} tasks).",
+                                                        task_name, current_max_concurrency, current_rate, prev_rate, prev_perf.concurrency
+                                                    );
+                                                }
+                                            } else {
+                                                let old_concurrency_for_log = current_max_concurrency;
+                                                current_max_concurrency = (current_max_concurrency * 2).clamp(min_concurrency, max_concurrency);
+                                                 println!(
+                                                    "[Task: {}] Initial concurrency adjustment: {} -> {} (Batch time: {:.2}s).",
+                                                    task_name, old_concurrency_for_log, current_max_concurrency, current_batch_duration.as_secs_f32()
+                                                );
+                                            }
+                                            
+                                            previous_perf_record = Some(current_perf);
+                                            items_processed_current_adjustment_batch = 0;
+                                            adjustment_batch_start_time = Instant::now();
                                         }
                                     }
                                 }
-                                Err(task_panic_error) => {
-                                    eprintln!("Spawned processing task panicked: {:?}. Aborting.", task_panic_error);
-                                    return Err(FrameworkError::InternalError(format!("Spawned processing task panicked: {}", task_panic_error)));
+                                Ok(Ok(None)) => {
+                                }
+                                Ok(Err(e)) => {
+                                    eprintln!("[Task: {}] Error processing item: {:?}", task_name, e);
+                                }
+                                Err(join_error) => {
+                                    eprintln!("[Task: {}] Panicked/cancelled processing task: {:?}", task_name, join_error);
                                 }
                             }
-                        }
-
-                        maybe_input_item = main_input_broker_rx.recv(), if active_processing_tasks.len() < max_concurrent_processing_ops => {
-                            if let Some(input_item) = maybe_input_item {
-                                items_picked_up_for_processing.fetch_add(1, AtomicOrdering::Relaxed);
-                                let processor_clone = task_processor.clone();
-                                active_processing_tasks.push(tokio::spawn(async move {
-                                    processor_clone.process(input_item.clone()).await
-                                }));
-                            } else {
-                                if active_processing_tasks.is_empty() {
+                        },
+    
+                        maybe_item_from_broker = main_input_broker_rx.recv(), if active_processing_tasks.len() < current_max_concurrency => {
+                            match maybe_item_from_broker {
+                                Some(item_from_broker) => {
+                                    let task_processor_clone = Arc::clone(&task_processor_arc);
+                                    active_processing_tasks.push(tokio::spawn(async move {
+                                        task_processor_clone.process(item_from_broker).await
+                                    }));
+                                }
+                                None => {
                                     break;
                                 }
                             }
-                        }
-                        
-                        else => {
-                            if active_processing_tasks.is_empty() {
+                        },
+                        else => { 
+                            if active_processing_tasks.is_empty() && main_input_broker_rx.is_closed() {
                                 break;
                             }
                         }
                     }
                 }
-                let final_picked_up_count = items_picked_up_for_processing.load(AtomicOrdering::Relaxed);
-                println!("[Task::run::transform_stage] Total items picked up from broker for processing: {}", final_picked_up_count);
-                Ok(())
+                while let Some(processed_result_from_join) = active_processing_tasks.next().await {
+                    match processed_result_from_join {
+                        Ok(Ok(Some(output_item))) => {
+                            let mut sent_to_at_least_one_writer = false;
+                            
+                            let concrete_output_item_drain: <Self as Task>::ProcessedItem = output_item;
+                            let item_for_draining: <Self as Task>::ProcessedItem = concrete_output_item_drain.clone();
+
+                            for (_output_config, writer_tx) in &current_transform_targets {
+                                if writer_tx.send(item_for_draining.clone()).await.is_err() {
+                                    eprintln!(
+                                        "[Task: {}] Receiver for writer {:?} dropped during final drain.",
+                                        task_name, _output_config
+                                    );
+                                } else {
+                                    sent_to_at_least_one_writer = true;
+                                }
+                            }
+                            if sent_to_at_least_one_writer {
+                                processed_and_sent_count += 1;
+                            }
+                        }
+                        Ok(Ok(None)) => { /* Skip */ }
+                        Ok(Err(e)) => eprintln!("[Task: {}] Error processing item during final drain: {:?}", task_name, e),
+                        Err(e) => eprintln!("[Task: {}] Panicked/cancelled task during final drain: {:?}", task_name, e),
+                    }
+                }
+                Ok(processed_and_sent_count)
             });
-            processing_handles.push(transform_and_dispatch_handle);
+            // Add transform_and_dispatch_handle to its specific collection.
+            transform_handles.push(transform_and_dispatch_handle);
         }
 
         println!("Awaiting reader forwarding tasks...");
@@ -322,29 +434,54 @@ pub trait Task: Clone + Send + Sync + 'static {
         }
         println!("All reader forwarding tasks completed.");
 
-        println!("Awaiting transformation and writer tasks...");
-        while let Some(result) = processing_handles.next().await {
+        println!("Awaiting transformation tasks...");
+        // Await transformation handles first, as they feed the writers.
+        while let Some(result) = transform_handles.next().await {
             match result {
-                Ok(Ok(())) => { /* Task completed successfully */ }
+                Ok(Ok(processed_count_from_handle)) => { // This is usize
+                    total_items_successfully_processed.fetch_add(processed_count_from_handle, AtomicOrdering::Relaxed);
+                }
                 Ok(Err(framework_err)) => {
                     eprintln!(
-                        "A processing task failed with FrameworkError: {:?}",
+                        "A transformation task failed with FrameworkError: {:?}",
                         framework_err
                     );
-
-                    return Err(framework_err);
+                    // Depending on desired behavior, might want to signal writers to shutdown or just log and continue.
+                    return Err(framework_err); // For now, exiting on transform error.
                 }
                 Err(join_err) => {
                     eprintln!(
-                        "A processing task panicked: {:?}. Propagating panic.",
+                        "A transformation task panicked: {:?}. Propagating panic.",
                         join_err
                     );
-
                     std::panic::resume_unwind(join_err.into_panic());
                 }
             }
         }
-        println!("All transformation and writer tasks completed.");
+        println!("All transformation tasks completed.");
+
+        println!("Awaiting writer completion tasks...");
+        while let Some(result) = writer_completion_handles.next().await {
+            match result {
+                Ok(Ok(())) => { /* Writer completed successfully */ }
+                Ok(Err(framework_err)) => {
+                    eprintln!(
+                        "A writer task failed with FrameworkError: {:?}",
+                        framework_err
+                    );
+                    // This error means data might not have been fully written.
+                    return Err(framework_err); // Exit on writer error.
+                }
+                Err(join_err) => {
+                    eprintln!(
+                        "A writer task panicked: {:?}. Propagating panic.",
+                        join_err
+                    );
+                    std::panic::resume_unwind(join_err.into_panic());
+                }
+            }
+        }
+        println!("All writer tasks completed.");
 
         let duration = start_time.elapsed();
         let final_read_count = total_items_read_to_broker.load(AtomicOrdering::Relaxed);

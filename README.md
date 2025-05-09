@@ -67,7 +67,7 @@ pub trait Task: Send + Sync + 'static {
     async fn get_writer(&self, endpoint_config: &DataEndpoint)
         -> Result<Box<dyn Writer<Self::ProcessedItem>>, FrameworkError>;
     
-    // 任务执行的入口点（框架已提供默认实现）
+    // 任务执行的入口点（框架已提供默认实现，该实现包含了一个动态并发调整机制。它会根据处理速率自动调整核心处理阶段的并发操作数（初始值基于CPU核心数，处理每批数据后评估性能，若速率显著提升则并发数翻倍，若下降则减少前一次增加量的一半，速率稳定则锁定并发数，上下限通常为CPU核心数的0.5倍至8倍），旨在无需手动配置的情况下优化吞吐量。）
     async fn run(&self) -> Result<(), FrameworkError>;
 }
 ```
@@ -152,8 +152,8 @@ pub trait Writer<OutputItem: Send + 'static>: Send + Sync {
     *   **处理复杂类型 (如 `serde_json::Value`)**：
         *   `serde_json::Value` (或 `sqlx::types::Json<serde_json::Value>`) 不能直接与 `sqlx::any::AnyRow` 的 `FromRow` 派生兼容，因为 `sqlx` 没有为 `Json<T>` 提供通用的 `sqlx::Decode<'_, sqlx::Any>` 实现。
         *   **建议策略**：如果您的 `InputItem` 需要表示复杂结构（如 JSON 对象/数组）并且可能从 SQL 读取，请在数据库中将该列存储为 `TEXT` 类型。在您的 `InputItem` 结构体中，将对应的字段定义为 `String` 类型。`#[derive(sqlx::FromRow)]` 将能正确处理这个 `String` 字段。然后，在 `Task::process` 方法内部，您可以使用 `serde_json::from_str()` 将这个字符串解析为实际的 `serde_json::Value` 或目标结构体。
-    *   **对于非 SQL 输入 (如 JSONL)**:
-        *   如果您的主要输入是 JSONL，并且 `InputItem` 是一个表示整行内容的 `String` (或如 `TextLine { value: String }` 这样的简单包装器)，那么 `read` 方法会很简单。解析 JSON 字符串的逻辑会移至 `process` 方法。这种方式可以避免不必要的多次序列化/反序列化，并简化 `FromRow` 的满足。
+        *   **对于非 SQL 输入 (如 JSONL)**:
+            *   如果您的主要输入是 JSONL，并且 `InputItem` 是一个表示整行内容的 `String` (或如 `TextLine { value: String }` 这样的简单包装器)，那么 `read` 方法会很简单。解析 JSON 字符串的逻辑会移至 `process` 方法。这种方式可以避免不必要的多次序列化/反序列化，并简化 `FromRow` 的满足。
 
 2.  **`read` vs. `process` 的职责**：
     *   `read` 的主要职责是尽快将原始输入（通常是 `String`）转换为 `InputItem`。对于简单的行式数据，如果解析开销不大，可以在这里完成。
@@ -171,7 +171,8 @@ pub trait Writer<OutputItem: Send + 'static>: Send + Sync {
 5.  **性能考虑**：
     *   最小化 `InputItem` 和 `ProcessedItem` 的克隆 (`.clone()`)，除非必要。
     *   在 `process` 中避免阻塞操作。如果需要执行 CPU 密集型或可能阻塞的操作，考虑使用 `tokio::task::spawn_blocking`。
-    *   合理配置并发参数，如 `RedisWriter` 的 `max_concurrent_tasks`。
+    *   对于特定的Reader/Writer组件（如 `RedisReader`, `RedisWriter`）可能仍有其独立的并发参数（如`max_concurrent_tasks`），这些参数控制其组件内部的并发行为。
+    *   **自动化并发管理**: 框架的默认 `Task::run` 实现内置了动态并发调整机制，可自动优化核心处理阶段的并行度，以适应不同的IO和处理负载。
 
 ## 贡献
 
