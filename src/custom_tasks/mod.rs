@@ -32,7 +32,7 @@ pub enum LineFormat {
 }
 
 #[async_trait::async_trait]
-pub trait Task: Send + Sync + 'static {
+pub trait Task: Clone + Send + Sync + 'static {
     type InputItem: Send
         + Sync
         + 'static
@@ -48,9 +48,10 @@ pub trait Task: Send + Sync + 'static {
 
     fn read(&self) -> Box<dyn Fn(String) -> Self::InputItem + Send + Sync + 'static>;
 
-    fn process(
+    async fn process(
         &self,
-    ) -> Box<dyn Fn(Self::InputItem) -> Option<Self::ProcessedItem> + Send + Sync + 'static>;
+        item: Self::InputItem,
+    ) -> Result<Option<Self::ProcessedItem>, FrameworkError>;
 
     async fn get_writer(
         &self,
@@ -75,9 +76,9 @@ pub trait Task: Send + Sync + 'static {
 
         for input_config in input_configs {
             let reader_instance: Box<dyn Reader<Self::InputItem>> = match &input_config {
-                DataEndpoint::LineDelimited { path, format } => {
-                    Box::new(crate::readers::line_reader::LineReader::new(path.clone(), format.clone()))
-                }
+                DataEndpoint::LineDelimited { path, format } => Box::new(
+                    crate::readers::line_reader::LineReader::new(path.clone(), format.clone()),
+                ),
                 DataEndpoint::Xml { path } => {
                     let record_tag = "record".to_string();
                     Box::new(XmlReader::new(path.clone(), record_tag))
@@ -119,7 +120,9 @@ pub trait Task: Send + Sync + 'static {
                 }
                 DataEndpoint::Debug { .. } => {
                     return Err(FrameworkError::UnsupportedEndpointType {
-                        endpoint_description: format!("Debug endpoint cannot be used as a direct reader source in this factory version."),
+                        endpoint_description: format!(
+                            "Debug endpoint cannot be used as a direct reader source in this factory version."
+                        ),
                         operation_description: "Automated reader creation in Task::run".to_string(),
                     });
                 }
@@ -192,28 +195,37 @@ pub trait Task: Send + Sync + 'static {
                 transform_targets.push((output_config.clone(), tx_to_writer));
             }
 
-            let process_fn = self.process();
-
+            let task_processor = self.clone(); // Clone self for the transform task
             let transform_task_handle = tokio::spawn(async move {
                 while let Some(input_item) = main_input_broker_rx.recv().await {
-                    if let Some(output_item) = process_fn(input_item.clone()) {
-                        for (_output_config, tx_to_writer) in &transform_targets {
-                            if tx_to_writer.send(output_item.clone()).await.is_err() {
-                                let err_msg = format!(
-                                    "Writer channel closed for output {:?}. Cannot send transformed item.",
-                                    _output_config
-                                );
-                                eprintln!("FrameworkError: {}", err_msg);
-
-                                return Err(FrameworkError::ChannelSendError {
-                                    channel_description: format!(
-                                        "writer channel for output {:?}",
+                    match task_processor.process(input_item.clone()).await {
+                        Ok(Some(output_item)) => {
+                            for (_output_config, tx_to_writer) in &transform_targets {
+                                if tx_to_writer.send(output_item.clone()).await.is_err() {
+                                    let err_msg = format!(
+                                        "Writer channel closed for output {:?}. Cannot send transformed item.",
                                         _output_config
-                                    ),
-                                    error_message: "Receiver dropped or writer task failed"
-                                        .to_string(),
-                                });
+                                    );
+                                    eprintln!("FrameworkError: {}", err_msg);
+
+                                    return Err(FrameworkError::ChannelSendError {
+                                        channel_description: format!(
+                                            "writer channel for output {:?}",
+                                            _output_config
+                                        ),
+                                        error_message: "Receiver dropped or writer task failed"
+                                            .to_string(),
+                                    });
+                                }
                             }
+                        }
+                        Ok(None) => { /* Item processed but resulted in no output, or skipped */ }
+                        Err(e) => {
+                            eprintln!(
+                                "FrameworkError during item processing: {:?}. Aborting transform task.",
+                                e
+                            );
+                            return Err(e); // Propagate the FrameworkError
                         }
                     }
                 }

@@ -12,6 +12,7 @@ pub struct TextRecord {
     pub text: String,
 }
 
+#[derive(Clone)]
 pub struct TaskRwkvJsonlBindix {
     pub inputs_info: Vec<DataEndpoint>,
     pub outputs_info: Vec<DataEndpoint>,
@@ -57,22 +58,27 @@ impl Task for TaskRwkvJsonlBindix {
         })
     }
 
-    fn process(
+    async fn process(
         &self,
-    ) -> Box<dyn Fn(Self::InputItem) -> Option<Self::ProcessedItem> + Send + Sync + 'static> {
-        let tokenizer_clone = Arc::clone(&self.tokenizer);
-        Box::new(
-            move |input_item: Self::InputItem| -> Option<Self::ProcessedItem> {
-                let json_line_str = input_item.content;
-                
-                let text_record: TextRecord = serde_json::from_str(&json_line_str).unwrap_or_else(|e| {
-                    panic!("Panic: JSON line parsing failed in process: {}. Line: {}", e, json_line_str)
+        input_item: Self::InputItem,
+    ) -> Result<Option<Self::ProcessedItem>, FrameworkError> {
+        let json_line_str = input_item.content;
+        
+        let text_record: TextRecord = match serde_json::from_str(&json_line_str) {
+            Ok(record) => record,
+            Err(e) => {
+                return Err(FrameworkError::PipelineError {
+                    component_name: "TaskRwkvJsonlBindix::process".to_string(),
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("JSON line parsing failed: {}. Line: {}", e, json_line_str),
+                    )),
                 });
+            }
+        };
 
-                let tokens = tokenizer_clone.encode(&text_record.text, true);
-                Some(BinidxItem { tokens })
-            },
-        )
+        let tokens = self.tokenizer.encode(&text_record.text, true);
+        Ok(Some(BinidxItem { tokens }))
     }
 
     async fn get_writer(

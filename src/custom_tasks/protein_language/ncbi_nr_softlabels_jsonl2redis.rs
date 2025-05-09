@@ -14,11 +14,14 @@ use std::sync::Arc;
 #[derive(Debug, Clone, FromRow, Deserialize)]
 pub struct TextLine {
     pub value: String,
+    pub text: String,
 }
 
+#[derive(Clone)]
 pub struct TaskNcbiNrSoftlabelsJsonl2Redis {
     pub inputs_info: Vec<DataEndpoint>,
     pub outputs_info: Vec<DataEndpoint>,
+    pub id_counter: Arc<AtomicUsize>,
 }
 
 impl TaskNcbiNrSoftlabelsJsonl2Redis {
@@ -26,6 +29,7 @@ impl TaskNcbiNrSoftlabelsJsonl2Redis {
         Self {
             inputs_info: Self::get_inputs_info(),
             outputs_info: Self::get_outputs_info(),
+            id_counter: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
@@ -59,60 +63,92 @@ impl Task for TaskNcbiNrSoftlabelsJsonl2Redis {
         Box::new(|line_str: String| -> Self::InputItem { LineInput { content: line_str } })
     }
 
-    fn process(
+    async fn process(
         &self,
-    ) -> Box<dyn Fn(Self::InputItem) -> Option<Self::ProcessedItem> + Send + Sync + 'static> {
-        let key_prefix_cloned = if let DataEndpoint::Redis { key_prefix, .. } =
-            &self.outputs_info[0]
+        input_item: Self::InputItem,
+    ) -> Result<Option<Self::ProcessedItem>, FrameworkError> {
+        let key_prefix_cloned = if let Some(DataEndpoint::Redis { key_prefix, .. }) =
+            self.outputs_info.get(0)
         {
             key_prefix.clone()
         } else {
             if TEST_MODE {
                 "".to_string()
             } else {
-                panic!(
-                    "TaskNcbiNrSoftlabelsJsonl2Redis requires a Redis endpoint configured as the first output to determine key_prefix."
-                );
+                return Err(FrameworkError::PipelineError {
+                    component_name: "TaskNcbiNrSoftlabelsJsonl2Redis::process".to_string(),
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Requires a Redis endpoint configured as the first output to determine key_prefix.",
+                    )),
+                });
             }
         };
 
-        let id_counter = Arc::new(AtomicUsize::new(0));
+        let json_line_str = input_item.content;
+        let current_id = self.id_counter.fetch_add(1, Ordering::SeqCst);
+        let key = format!("{}{}", key_prefix_cloned, current_id);
 
-        Box::new(
-            move |input_item: Self::InputItem| -> Option<Self::ProcessedItem> {
-                let json_line_str = input_item.content;
-                let current_id = id_counter.fetch_add(1, Ordering::SeqCst);
-                let key = format!("{}{}", key_prefix_cloned, current_id);
-
-                let original_json_value: serde_json::Value = serde_json::from_str(&json_line_str)
-                    .unwrap_or_else(|e| {
-                        panic!(
-                            "Panic: JSON行解析失败 in process: {} for line: {}",
-                            e, json_line_str
-                        )
-                    });
-
-                let protein_id_val = original_json_value
-                    .get(0)
-                    .expect("Missing protein_id_list in JSON array");
-                let softlabel_seq_val = original_json_value
-                    .get(1)
-                    .expect("Missing softlabel_seq in JSON array");
-
-                let output_redis_value_json = serde_json::json!({
-                    "protein_id_list": protein_id_val,
-                    "softlabel_seq": softlabel_seq_val
+        let original_json_value: serde_json::Value = match serde_json::from_str(&json_line_str) {
+            Ok(val) => val,
+            Err(e) => {
+                return Err(FrameworkError::PipelineError {
+                    component_name: "TaskNcbiNrSoftlabelsJsonl2Redis::process".to_string(),
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("JSON line parsing failed: {} for line: {}", e, json_line_str),
+                    )),
                 });
+            }
+        };
 
-                let value_as_string = serde_json::to_string(&output_redis_value_json)
-                    .expect("Failed to serialize final JSON object to string for Redis");
+        let protein_id_val = match original_json_value.get(0) {
+            Some(val) => val,
+            None => {
+                return Err(FrameworkError::PipelineError {
+                    component_name: "TaskNcbiNrSoftlabelsJsonl2Redis::process".to_string(),
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Missing protein_id_list in JSON array",
+                    )),
+                });
+            }
+        };
+        let softlabel_seq_val = match original_json_value.get(1) {
+            Some(val) => val,
+            None => {
+                return Err(FrameworkError::PipelineError {
+                    component_name: "TaskNcbiNrSoftlabelsJsonl2Redis::process".to_string(),
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Missing softlabel_seq in JSON array",
+                    )),
+                });
+            }
+        };
 
-                Some(RedisKVPair {
-                    key,
-                    value: value_as_string,
-                })
-            },
-        )
+        let output_redis_value_json = serde_json::json!({
+            "protein_id_list": protein_id_val,
+            "softlabel_seq": softlabel_seq_val
+        });
+
+        let value_as_string = match serde_json::to_string(&output_redis_value_json) {
+            Ok(s) => s,
+            Err(e) => {
+                return Err(FrameworkError::PipelineError {
+                    component_name: "TaskNcbiNrSoftlabelsJsonl2Redis::process".to_string(),
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to serialize final JSON object to string for Redis: {}", e),
+                    )),
+                });
+            }
+        };
+
+        Ok(Some(RedisKVPair {
+            key,
+            value: value_as_string,
+        }))
     }
 
     async fn get_writer(
