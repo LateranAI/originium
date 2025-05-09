@@ -5,8 +5,9 @@ use sqlx::any::AnyPoolOptions;
 use sqlx::{Error as SqlxError, query::Query, Database};
 use std::fmt::Debug;
 use tokio::sync::mpsc::Receiver;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 
 
@@ -37,14 +38,14 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> SqlWriter<T> {
 
              return Err(SqlxError::Configuration("Column names cannot be empty for SqlWriter".into()));
         }
-        println!(
+        eprintln!(
             "[SqlWriter] Initializing for table '{}' at {}. Columns: {:?}",
             table_name, connection_url, column_names
         );
         let pool_options = AnyPoolOptions::new()
             .max_connections(10);
         let pool = pool_options.connect(&connection_url).await?;
-        println!("[SqlWriter] Connected to database.");
+        eprintln!("[SqlWriter] Connected to database.");
 
         Ok(Self {
             connection_url,
@@ -71,12 +72,13 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> Writer<T> for SqlWriter<T> 
     async fn pipeline(
         &self,
         mut rx: Receiver<T>,
+        mp: Arc<MultiProgress>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start_time = std::time::Instant::now();
         let mut items_written: u64 = 0;
         let insert_sql = self.generate_insert_sql();
 
-        let pb_items = ProgressBar::new_spinner();
+        let pb_items = mp.add(ProgressBar::new_spinner());
         pb_items.enable_steady_tick(std::time::Duration::from_millis(120));
         pb_items.set_style(
             ProgressStyle::with_template(
@@ -93,7 +95,7 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> Writer<T> for SqlWriter<T> 
             if batch.len() >= batch_size {
                 let mut transaction = self.pool.begin().await?;
                 let current_batch = std::mem::take(&mut batch);
-                 println!("[SqlWriter] Writing batch of {} items...", current_batch.len());
+                 mp.println(format!("[SqlWriter] Writing batch of {} items...", current_batch.len())).unwrap_or_default();
                 for batch_item in current_batch {
                     let query = sqlx::query(&insert_sql);
 
@@ -106,14 +108,14 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> Writer<T> for SqlWriter<T> 
                     pb_items.inc(1);
                 }
                 transaction.commit().await?;
-                 println!("[SqlWriter] Batch committed.");
+                 mp.println(format!("[SqlWriter] Batch committed.")).unwrap_or_default();
             }
         }
 
 
         if !batch.is_empty() {
              let mut transaction = self.pool.begin().await?;
-             println!("[SqlWriter] Writing final batch of {} items...", batch.len());
+             mp.println(format!("[SqlWriter] Writing final batch of {} items...", batch.len())).unwrap_or_default();
             for batch_item in batch {
                  let query = sqlx::query(&insert_sql);
                  let bound_query = batch_item.bind_parameters(query);
@@ -125,18 +127,18 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> Writer<T> for SqlWriter<T> 
                  pb_items.inc(1);
             }
              transaction.commit().await?;
-             println!("[SqlWriter] Final batch committed.");
+             mp.println(format!("[SqlWriter] Final batch committed.")).unwrap_or_default();
         }
 
         pb_items.finish_with_message(format!("[SqlWriter] Row writing complete. {} rows written.", items_written));
 
         let duration = start_time.elapsed();
-        println!(
+        mp.println(format!(
             "[SqlWriter] Finished successfully in {:?}. Table: {}. Total rows: {}",
             duration,
             self.table_name,
             items_written
-        );
+        )).unwrap_or_default();
         
 
 

@@ -2,7 +2,7 @@ use crate::writers::Writer;
 use async_trait::async_trait;
 use bytemuck;
 use futures::future::join_all;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Serialize;
 use std::fmt::Debug;
 use std::fs::{self, File};
@@ -15,6 +15,7 @@ use std::time::Instant;
 use tokio::sync::mpsc::Receiver as TokioReceiver;
 use tokio::sync::mpsc::{channel, Sender as TokioSender};
 use tokio::task::JoinHandle;
+use std::sync::Arc;
 
 
 const MAGIC_HDR: &[u8] = b"MMIDIDX\x00\x00";
@@ -80,8 +81,12 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<BinidxItem>> Writer<T> 
     async fn pipeline(
         &self,
         mut rx: TokioReceiver<T>,
+        mp: Arc<MultiProgress>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        println!("RwkvBinidxWriter pipeline started for {} based at {} with {} threads.", self.filename_prefix, self.base_path.display(), self.num_threads);
+        mp.println(format!(
+            "RwkvBinidxWriter pipeline started for {} based at {} with {} threads.", 
+            self.filename_prefix, self.base_path.display(), self.num_threads
+        )).unwrap_or_default();
         let overall_start_time = Instant::now();
 
         let (coordinator_input_tx, mut coordinator_input_rx): (TokioSender<Option<BinidxItem>>, TokioReceiver<Option<BinidxItem>>) = channel(self.num_threads * 2);
@@ -90,6 +95,8 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<BinidxItem>> Writer<T> 
         let num_threads_coord = self.num_threads;
         let filename_prefix_coord = self.filename_prefix.clone();
         let base_path_coord = self.base_path.clone();
+
+        let mp_for_coord = Arc::clone(&mp);
 
         let coordinator_handle = thread::spawn(move || -> Result<u64, String> {
             let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create Tokio runtime in coordinator: {}", e))?;
@@ -144,7 +151,7 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<BinidxItem>> Writer<T> 
                                 }
                                 items_processed_by_coordinator_thread += 1;
                             } else { 
-                                println!("[Coordinator] End signal received from main pipeline. Signaling workers to stop.");
+                                mp_for_coord.println(format!("[Coordinator] End signal received from main pipeline. Signaling workers to stop.")).unwrap_or_default();
                                 for (idx, sender) in worker_senders.iter().enumerate() {
                                     if sender.send(None).await.is_err() { 
                                         eprintln!("[Coordinator] Failed to send stop signal to worker {}", idx);
@@ -154,7 +161,7 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<BinidxItem>> Writer<T> 
                             }
                         }
                         else => { 
-                            println!("[Coordinator] Input channel closed unexpectedly.");
+                            mp_for_coord.println(format!("[Coordinator] Input channel closed unexpectedly.")).unwrap_or_default();
                              for (idx, sender) in worker_senders.iter().enumerate() {
                                 if sender.send(None).await.is_err() {
                                     eprintln!("[Coordinator] Failed to send stop signal to worker {} on unexpected close.", idx);
@@ -165,9 +172,9 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<BinidxItem>> Writer<T> 
                     }
                 }
 
-                println!("[Coordinator] Waiting for all worker tasks to complete...");
+                mp_for_coord.println(format!("[Coordinator] Waiting for all worker tasks to complete...")).unwrap_or_default();
                 join_all(worker_handles).await;
-                println!("[Coordinator] All worker tasks completed. Items processed by coord: {}", items_processed_by_coordinator_thread);
+                mp_for_coord.println(format!("[Coordinator] All worker tasks completed. Items processed by coord: {}", items_processed_by_coordinator_thread)).unwrap_or_default();
             });
 
             drop(worker_result_tx);
@@ -188,12 +195,12 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<BinidxItem>> Writer<T> 
         });
 
         forward_to_coord_handle.await.map_err(|e| format!("Item forwarding task panicked: {}", e))?;
-        println!("Item forwarding to coordinator complete.");
+        mp.println(format!("Item forwarding to coordinator complete.")).unwrap_or_default();
 
         let mut total_items_processed_approx: u64 = 0;
         match coordinator_handle.join() {
             Ok(Ok(count)) => {
-                println!("Coordinator thread finished successfully. Items distributed by coord: {}", count);
+                mp.println(format!("Coordinator thread finished successfully. Items distributed by coord: {}", count)).unwrap_or_default();
                 total_items_processed_approx = count;
             }
             Ok(Err(e)) => return Err(format!("Coordinator thread failed: {}", e).into()),
@@ -201,10 +208,10 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<BinidxItem>> Writer<T> 
         }
 
         let collected_worker_results: Vec<WorkerResult> = worker_result_rx.iter().collect();
-        println!("Collected {} worker results.", collected_worker_results.len());
+        mp.println(format!("Collected {} worker results.", collected_worker_results.len())).unwrap_or_default();
 
         if collected_worker_results.is_empty() && total_items_processed_approx > 0 && self.num_threads > 0 {
-            println!("Warning: No worker results collected, but {} items were processed by coordinator for {} threads. Check worker logic.", total_items_processed_approx, self.num_threads);
+            mp.println(format!("Warning: No worker results collected, but {} items were processed by coordinator for {} threads. Check worker logic.", total_items_processed_approx, self.num_threads)).unwrap_or_default();
         }
 
         let mut final_worker_results = collected_worker_results;
@@ -213,19 +220,19 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<BinidxItem>> Writer<T> 
         let total_docs_from_workers: usize = final_worker_results.iter().map(|r| r.doc_sizes_for_thread.len()).sum();
         let total_tokens_from_workers: u64 = final_worker_results.iter().map(|r| r.tokens_processed_in_thread).sum();
 
-        let (final_bin_path, total_bytes_in_final_bin) = self.merge_temp_files(&final_worker_results)?;
+        let (final_bin_path, total_bytes_in_final_bin) = self.merge_temp_files(&final_worker_results, Arc::clone(&mp))?;
         let all_doc_sizes: Vec<u64> = final_worker_results.iter().flat_map(|r| r.doc_sizes_for_thread.clone()).collect();
-        self.write_final_idx(&final_bin_path, &all_doc_sizes)?;
-        self.cleanup_temp_files(&final_worker_results);
+        self.write_final_idx(&final_bin_path, &all_doc_sizes, Arc::clone(&mp))?;
+        self.cleanup_temp_files(&final_worker_results, Arc::clone(&mp));
 
-        println!(
+        mp.println(format!(
             "[RwkvBinidxWriter] Pipeline finished in {:?}. Total items proxied by coord: {}. Docs from workers: {}. Tokens from workers: {}. Final .bin size: {:.2} MB.",
             overall_start_time.elapsed(),
             total_items_processed_approx,
             total_docs_from_workers,
             total_tokens_from_workers,
             total_bytes_in_final_bin as f64 / (1024.0 * 1024.0)
-        );
+        )).unwrap_or_default();
 
         Ok(())
     }
@@ -235,13 +242,14 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<BinidxItem>> RwkvBinidx
     fn merge_temp_files(
         &self,
         worker_results: &[WorkerResult],
+        mp: Arc<MultiProgress>,
     ) -> Result<(PathBuf, u64), Box<dyn std::error::Error + Send + Sync>> {
         let final_bin_path = self.base_path.join(format!("{}.bin", self.filename_prefix));
         let mut final_bin_writer = BufWriter::new(File::create(&final_bin_path)?);
         let mut total_bytes_written: u64 = 0;
 
-        println!("Merging {} temporary .bin files into {}", worker_results.len(), final_bin_path.display());
-        let merge_pb = ProgressBar::new(worker_results.iter().map(|r| r.bytes_written_to_temp_bin).sum());
+        mp.println(format!("Merging {} temporary .bin files into {}", worker_results.len(), final_bin_path.display())).unwrap_or_default();
+        let merge_pb = mp.add(ProgressBar::new(worker_results.iter().map(|r| r.bytes_written_to_temp_bin).sum()));
         merge_pb.set_style(
             ProgressStyle::with_template(
                 "[{elapsed_precise}] Merging [{bar:40.green/blue}] {bytes}/{total_bytes} ({eta})"
@@ -263,10 +271,11 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<BinidxItem>> RwkvBinidx
         &self,
         final_bin_path: &Path,
         all_doc_sizes: &[u64],
+        mp: Arc<MultiProgress>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let final_idx_path = final_bin_path.with_extension("idx");
+        mp.println(format!("Writing final .idx file to {}", final_idx_path.display())).unwrap_or_default();
         let mut idx_writer = BufWriter::new(File::create(&final_idx_path)?);
-        println!("Writing final .idx file to: {}", final_idx_path.display());
 
         idx_writer.write_all(b"BINIDX")?;
         idx_writer.write_all(&1u32.to_le_bytes())?;
@@ -283,17 +292,17 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<BinidxItem>> RwkvBinidx
             current_offset += size_in_bytes;
         }
         idx_writer.flush()?;
-        println!("Finished writing .idx file.");
+        mp.println(format!("Finished writing .idx file.")).unwrap_or_default();
         Ok(())
     }
 
-    fn cleanup_temp_files(&self, worker_results: &[WorkerResult]) {
-        println!("Cleaning up temporary files...");
+    fn cleanup_temp_files(&self, worker_results: &[WorkerResult], mp: Arc<MultiProgress>) {
+        mp.println(format!("Cleaning up {} temporary .bin files...", worker_results.len())).unwrap_or_default();
         for result in worker_results {
             if let Err(e) = fs::remove_file(&result.temp_bin_path) {
                 eprintln!("Failed to remove temp file {}: {}", result.temp_bin_path.display(), e);
             }
         }
-        println!("Temporary files cleanup complete.");
+        mp.println(format!("Temporary files cleanup complete.")).unwrap_or_default();
     }
 }

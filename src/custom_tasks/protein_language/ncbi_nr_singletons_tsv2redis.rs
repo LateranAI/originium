@@ -101,9 +101,18 @@ impl Task for TaskNcbiNrSingletonsTsvToRedis {
 
         match protein_seq_result {
             Ok(Some(protein_seq)) => {
+                // Create protein_id_list
+                let protein_id_list = vec![protein_id_from_tsv.clone()]; // protein_id_from_tsv is already a String
+
+                // Create softlabel_seq
+                let mut softlabel_seq = Vec::new();
+                for char_val in protein_seq.chars() {
+                    softlabel_seq.push(serde_json::json!({ char_val.to_string(): 1 }));
+                }
+
                 let output_json_value = serde_json::json!({
-                    "protein_id": protein_id_from_tsv,
-                    "protein_seq": protein_seq,
+                    "protein_id_list": protein_id_list,
+                    "softlabel_seq": softlabel_seq,
                 });
 
                 let value_as_string = serde_json::to_string(&output_json_value).map_err(|e| {

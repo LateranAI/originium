@@ -8,7 +8,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 pub struct XmlReader {
     path: String,
@@ -17,7 +17,7 @@ pub struct XmlReader {
 
 impl XmlReader {
     pub fn new(path: String, record_tag: String) -> Self {
-        println!(
+        eprintln!(
             "[XmlReader] Initialized for file: {}, extracting elements tagged <{}>",
             path, record_tag
         );
@@ -36,6 +36,7 @@ where
     async fn pipeline(
         &self,
         read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(100);
         let file_path_str = self.path.clone();
@@ -44,7 +45,7 @@ where
 
 
         let file_size = std::fs::metadata(&file_path_str).map(|m| m.len()).unwrap_or(0);
-        let pb_process = ProgressBar::new(file_size);
+        let pb_process = mp.add(ProgressBar::new(file_size));
         pb_process.set_style(
             ProgressStyle::with_template(
                 "[{elapsed_precise}] [Processing XML {bar:40.blue/white}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"

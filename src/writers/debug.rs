@@ -3,6 +3,8 @@ use std::error::Error;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use tokio::sync::mpsc::Receiver;
+use std::sync::Arc;
+use indicatif::MultiProgress;
 
 
 
@@ -35,22 +37,22 @@ impl<T: Debug + Send + Sync + 'static> Writer<T> for DebugWriter<T> {
     async fn pipeline(
         &self,
         mut rx: Receiver<T>,
+        mp: Arc<MultiProgress>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let prefix_str = self.prefix.as_deref().unwrap_or("[DebugWriter]");
         let mut count: u64 = 0;
 
-        println!("{} Pipeline started. Waiting for items...", prefix_str);
+        mp.println(format!("{} Pipeline started. Waiting for items...", prefix_str)).unwrap_or_default();
 
         while let Some(item) = rx.recv().await {
-
-            println!("{} Item {}: {:?}", prefix_str, count, item);
+            mp.println(format!("{} Item {}: {:?}", prefix_str, count, item)).unwrap_or_default();
             count += 1;
         }
 
-        println!(
+        mp.println(format!(
             "{} Pipeline finished. Receiver channel closed. Total items received: {}.",
             prefix_str, count
-        );
+        )).unwrap_or_default();
         Ok(())
     }
 }

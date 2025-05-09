@@ -5,8 +5,9 @@ use sqlx::{FromRow};
 use futures::stream::StreamExt;
 use std::fmt::Debug;
 use tokio::sync::mpsc;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::marker::{Unpin, PhantomData};
+use std::sync::Arc;
 
 pub struct SqlReader<Item> {
     connection_url: String,
@@ -19,7 +20,7 @@ where
     for<'r> Item: FromRow<'r, AnyRow> + Unpin + Send + Sync + 'static + Debug,
 {
     pub fn new(connection_url: String, query: String) -> Self {
-        println!(
+        eprintln!(
             "[SqlReader] Initialized for URL: {}. Query: {}",
             connection_url, query
         );
@@ -35,6 +36,7 @@ where
     async fn pipeline(
         &self,
         _read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(100);
         let pool_options = AnyPoolOptions::new()
@@ -52,9 +54,9 @@ where
                     return;
                 }
             };
-            println!("[SqlReader] Connected to database: {}", url);
+            mp.println(format!("[SqlReader] Connected to database: {}", url)).unwrap_or_default();
 
-            let pb_process = ProgressBar::new_spinner();
+            let pb_process = mp.add(ProgressBar::new_spinner());
             pb_process.set_style(
                  ProgressStyle::with_template("[{elapsed_precise}] [Reading SQL rows {spinner:.blue}] {pos} rows fetched ({per_sec})")
                     .unwrap()
@@ -86,7 +88,7 @@ where
             if !pb_process.is_finished() {
                  pb_process.finish_with_message(format!("[SqlReader] Finished fetching rows. Total rows: {}", items_processed));
             }
-            println!("[SqlReader] Disconnecting from database: {}", url);
+            mp.println(format!("[SqlReader] Disconnecting from database: {}", url)).unwrap_or_default();
             pool.close().await;
         });
 

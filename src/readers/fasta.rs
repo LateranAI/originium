@@ -1,6 +1,6 @@
 use crate::readers::Reader;
 use async_trait::async_trait;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use needletail::{parse_fastx_file, /*parser::SequenceRecord,*/ /*FastxReader*/};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ pub struct FastaReader {
 
 impl FastaReader {
     pub fn new(path: String) -> Self {
-        println!(
+        eprintln!(
             "[FastaReader] Initialized for file: {}",
             path
         );
@@ -42,13 +42,14 @@ where
         &self,
 
         read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(100);
         let file_path_str = self.path.clone();
         let parser = Arc::new(read_fn);
 
         let file_size = std::fs::metadata(&file_path_str).map(|m| m.len()).unwrap_or(0);
-        let pb_process = ProgressBar::new(file_size);
+        let pb_process = mp.add(ProgressBar::new(file_size));
         pb_process.set_style(
             ProgressStyle::with_template(
                 "[{elapsed_precise}] [Processing Fasta {bar:40.yellow/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"

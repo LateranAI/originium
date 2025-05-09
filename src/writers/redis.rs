@@ -2,13 +2,14 @@ use super::Writer;
 use crate::utils::common_type::RedisKVPair;
 use async_trait::async_trait;
 use futures::stream::{FuturesUnordered, StreamExt};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use redis::aio::MultiplexedConnection;
 use redis::AsyncCommands;
 use std::error::Error;
 use std::marker::PhantomData;
 use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
+use std::sync::Arc;
 
 pub struct RedisWriter<T> {
     pub client: MultiplexedConnection,
@@ -37,11 +38,15 @@ where
     T: Into<RedisKVPair>,
     RedisKVPair: Send + Sync + 'static,
 {
-    async fn pipeline(&self, mut rx: Receiver<T>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn pipeline(
+        &self, 
+        mut rx: Receiver<T>,
+        mp: Arc<MultiProgress>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut workers = FuturesUnordered::new();
         let max_concurrent_tasks = self.max_concurrent_tasks;
 
-        let pb = ProgressBar::new_spinner();
+        let pb = mp.add(ProgressBar::new_spinner());
         pb.enable_steady_tick(Duration::from_millis(120));
         pb.set_style(
             ProgressStyle::with_template(
@@ -74,10 +79,14 @@ where
                             let mut task_conn = self.client.clone();
                             let pb_clone = pb.clone();
                             workers.push(tokio::spawn(async move {
-                                let _: () = task_conn.set(key.clone(), value)
-                                    .await
-                                    .expect(&format!("Redis SET failed for key: {}", key));
-                                pb_clone.inc(1);
+                                match task_conn.set(key.clone(), value).await {
+                                    Ok(()) => {
+                                        pb_clone.inc(1);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[RedisWriter] Redis SET failed for key '{}': {:?}", key, e);
+                                    }
+                                }
                             }));
                         }
                         None => {

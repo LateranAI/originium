@@ -1,7 +1,7 @@
 use crate::readers::Reader;
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use redis::AsyncCommands;
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -24,7 +24,7 @@ where
     Item: Send + Sync + 'static + Debug,
 {
     pub fn new(connection_url: String, key_prefix: String, max_concurrent_gets: usize) -> Self {
-        println!(
+        eprintln!(
             "[RedisReader] Initialized for URL: {}, Key Prefix: {}, Max Concurrent GETs: {}",
             connection_url, key_prefix, max_concurrent_gets
         );
@@ -56,6 +56,7 @@ where
     async fn pipeline(
         &self,
         read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(self.max_concurrent_gets * 2);
         let connection_url = self.connection_url.clone();
@@ -87,9 +88,9 @@ where
                     return;
                 }
             };
-            println!("[RedisReader] Connected to Redis: {}", connection_url);
+            mp.println(format!("[RedisReader] Connected to Redis: {}", connection_url)).unwrap_or_default();
 
-            let pb_process = ProgressBar::new_spinner();
+            let pb_process = mp.add(ProgressBar::new_spinner());
             pb_process.set_style(
                 ProgressStyle::with_template("[{elapsed_precise}] [Scanning Redis {spinner:.blue}] {pos} items processed ({per_sec}) | Keys: {len}")
                     .unwrap()
@@ -183,7 +184,7 @@ where
             if !pb_process.is_finished() {
                 pb_process.finish_with_message(format!("[RedisReader] Finished scanning. Total items processed: {}. Total keys scanned: {}", items_processed, total_keys_scanned));
             }
-            println!("[RedisReader] Disconnecting from Redis: {}", connection_url);
+            mp.println(format!("[RedisReader] Disconnecting from Redis: {}", connection_url)).unwrap_or_default();
         });
 
         rx

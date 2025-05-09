@@ -23,6 +23,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use indicatif::MultiProgress;
+
 use crate::readers::fasta::FastaReader;
 use crate::readers::sql::SqlReader;
 use crate::readers::xml::XmlReader;
@@ -70,18 +72,21 @@ pub trait Task: Clone + Send + Sync + 'static {
     ) -> Result<Box<dyn Writer<Self::ProcessedItem>>, FrameworkError>;
 
     async fn run(&self) -> Result<(), FrameworkError> {
-        println!("Starting Task (Framework Run V9 - Perf Metrics & Tunable Concurrency)");
+        let mp = Arc::new(MultiProgress::new());
+        let mp_clone_for_main_log = Arc::clone(&mp);
+
+        mp.println("Starting Task (Framework Run V10 - MultiProgress Enabled)").unwrap_or_default();
         let start_time = std::time::Instant::now();
 
         let input_configs = Self::get_inputs_info();
         let output_configs = Self::get_outputs_info();
 
         if input_configs.is_empty() {
-            println!("No input endpoints configured. Task will not process any data.");
+            mp.println("No input endpoints configured. Task will not process any data.").unwrap_or_default();
             let duration = start_time.elapsed();
-            println!("Task finished (no input) in {:?}.", duration);
-            println!("  Total items read into broker: 0");
-            println!("  Total items processed and sent to writer(s): 0");
+            mp.println(format!("Task finished (no input) in {:?}.", duration)).unwrap_or_default();
+            mp.println(format!("  Total items read into broker: 0")).unwrap_or_default();
+            mp.println(format!("  Total items processed and sent to writer(s): 0")).unwrap_or_default();
             return Ok(());
         }
 
@@ -149,8 +154,9 @@ pub trait Task: Clone + Send + Sync + 'static {
                     }
                 };
                 let read_fn = self.read();
+                let mp_clone_for_reader = Arc::clone(&mp);
 
-                let mut reader_output_rx = reader_instance.pipeline(read_fn).await;
+                let mut reader_output_rx = reader_instance.pipeline(read_fn, mp_clone_for_reader).await;
 
                 let tx_clone = main_input_broker_tx.clone();
                 let config_desc_for_error = format!("{:?}", input_config);
@@ -182,7 +188,7 @@ pub trait Task: Clone + Send + Sync + 'static {
 
         drop(main_input_broker_tx);
 
-        println!("All reader pipelines configured and forwarding tasks spawned.");
+        mp.println("All reader pipelines configured and forwarding tasks spawned.").unwrap_or_default();
 
         let mut transform_handles =
             FuturesUnordered::<JoinHandle<Result<usize, FrameworkError>>>::new();
@@ -191,12 +197,12 @@ pub trait Task: Clone + Send + Sync + 'static {
             FuturesUnordered::<JoinHandle<Result<(), FrameworkError>>>::new();
 
         if output_configs.is_empty() {
-            println!("No output endpoints configured. Consuming and discarding all input items.");
+            mp.println("No output endpoints configured. Consuming and discarding all input items.").unwrap_or_default();
             let mut count = 0;
             while let Some(_item) = main_input_broker_rx.recv().await {
                 count += 1;
             }
-            println!("Drained {} items from input broker.", count);
+            mp.println(format!("Drained {} items from input broker.", count)).unwrap_or_default();
         } else {
             let mut transform_targets = Vec::new();
 
@@ -207,9 +213,10 @@ pub trait Task: Clone + Send + Sync + 'static {
                     mpsc::channel::<Self::ProcessedItem>(100);
 
                 let component_name_for_error = format!("Writer for {:?}", output_config);
+                let mp_clone_for_writer = Arc::clone(&mp);
                 let writer_handle = tokio::spawn(async move {
                     writer_instance
-                        .pipeline(rx_for_writer_pipeline)
+                        .pipeline(rx_for_writer_pipeline, mp_clone_for_writer)
                         .await
                         .map_err(|e_box| FrameworkError::PipelineError {
                             component_name: component_name_for_error,
@@ -227,10 +234,10 @@ pub trait Task: Clone + Send + Sync + 'static {
             let task_processor = self.clone();
 
             let num_cpu_cores = num_cpus::get();
-            println!(
+            mp.println(format!(
                 "[Task::run] Initializing transform and dispatch stage. Dynamic concurrency enabled. Base CPU cores: {}.",
                 num_cpu_cores
-            );
+            )).unwrap_or_default();
 
             let transform_and_dispatch_handle = tokio::spawn(async move {
                 let mut active_processing_tasks = FuturesUnordered::new();
@@ -253,11 +260,6 @@ pub trait Task: Clone + Send + Sync + 'static {
                 let mut dynamic_adjustment_enabled: bool = true;
 
                 let task_name = "ProcessingStage";
-
-                println!(
-                    "[Task: {}] Initializing dynamic concurrency. Start: {}, Min: {}, Max: {}",
-                    task_name, current_max_concurrency, min_concurrency, max_concurrency
-                );
 
                 loop {
                     tokio::select! {
@@ -302,10 +304,6 @@ pub trait Task: Clone + Send + Sync + 'static {
 
                                                 if current_rate > prev_rate * 1.10 {
                                                     current_max_concurrency = (current_max_concurrency * 2).clamp(min_concurrency, max_concurrency);
-                                                    // println!(
-                                                    //     "[Task: {}] Concurrency increased: {} -> {} (Rate: {:.2}items/s vs {:.2}items/s @ {} tasks).",
-                                                    //     task_name, old_concurrency_for_log, current_max_concurrency, current_rate, prev_rate, prev_perf.concurrency
-                                                    // );
                                                 } else if current_rate < prev_rate * 0.90 {
                                                     let increase_amount = if concurrency_during_this_batch > prev_perf.concurrency {
                                                         concurrency_during_this_batch - prev_perf.concurrency
@@ -319,24 +317,17 @@ pub trait Task: Clone + Send + Sync + 'static {
                                                     } else {
                                                         current_max_concurrency = (current_max_concurrency * 3 / 4).clamp(min_concurrency, max_concurrency);
                                                     }
-                                                    // println!(
-                                                    //     "[Task: {}] Concurrency decreased: {} -> {} (Rate: {:.2}items/s vs {:.2}items/s @ {} tasks).",
-                                                    //     task_name, old_concurrency_for_log, current_max_concurrency, current_rate, prev_rate, prev_perf.concurrency
-                                                    // );
                                                 } else {
                                                     dynamic_adjustment_enabled = false;
-                                                    // println!(
-                                                    //     "[Task: {}] Concurrency stable at {}. Locking. (Rate: {:.2}items/s vs {:.2}items/s @ {} tasks).",
-                                                    //     task_name, current_max_concurrency, current_rate, prev_rate, prev_perf.concurrency
-                                                    // );
                                                 }
                                             } else {
                                                 let old_concurrency_for_log = current_max_concurrency;
                                                 current_max_concurrency = (current_max_concurrency * 2).clamp(min_concurrency, max_concurrency);
-                                                 println!(
-                                                    "[Task: {}] Initial concurrency adjustment: {} -> {} (Batch time: {:.2}s).",
-                                                    task_name, old_concurrency_for_log, current_max_concurrency, current_batch_duration.as_secs_f32()
-                                                );
+                                                 // Ensure this println related to initial concurrency adjustment remains commented
+                                                 // mp.println(format!(
+                                                 //    "[Task: {}] Initial concurrency adjustment: {} -> {} (Batch time: {:.2}s).",
+                                                 //    task_name, old_concurrency_for_log, current_max_concurrency, current_batch_duration.as_secs_f32()
+                                                 // )).unwrap_or_default();
                                             }
 
                                             previous_perf_record = Some(current_perf);
@@ -417,7 +408,7 @@ pub trait Task: Clone + Send + Sync + 'static {
             transform_handles.push(transform_and_dispatch_handle);
         }
 
-        println!("Awaiting reader forwarding tasks...");
+        mp.println("Awaiting reader forwarding tasks...").unwrap_or_default();
         while let Some(result) = reader_handles.next().await {
             match result {
                 Ok(Ok(())) => { /* Task completed successfully */ }
@@ -438,9 +429,9 @@ pub trait Task: Clone + Send + Sync + 'static {
                 }
             }
         }
-        println!("All reader forwarding tasks completed.");
+        mp.println("All reader forwarding tasks completed.").unwrap_or_default();
 
-        println!("Awaiting transformation tasks...");
+        mp.println("Awaiting transformation tasks...").unwrap_or_default();
 
         while let Some(result) = transform_handles.next().await {
             match result {
@@ -465,9 +456,9 @@ pub trait Task: Clone + Send + Sync + 'static {
                 }
             }
         }
-        println!("All transformation tasks completed.");
+        mp.println("All transformation tasks completed.").unwrap_or_default();
 
-        println!("Awaiting writer completion tasks...");
+        mp.println("Awaiting writer completion tasks...").unwrap_or_default();
         while let Some(result) = writer_completion_handles.next().await {
             match result {
                 Ok(Ok(())) => { /* Writer completed successfully */ }
@@ -485,35 +476,36 @@ pub trait Task: Clone + Send + Sync + 'static {
                 }
             }
         }
-        println!("All writer tasks completed.");
+        mp.println("All writer tasks completed.").unwrap_or_default();
 
         let duration = start_time.elapsed();
         let final_read_count = total_items_read_to_broker.load(AtomicOrdering::Relaxed);
         let final_processed_and_sent_count =
             total_items_successfully_processed.load(AtomicOrdering::Relaxed);
 
-        println!("Task finished successfully in {:?}.", duration);
-        println!("  Total items read into broker: {}", final_read_count);
-        println!(
+        mp_clone_for_main_log.println(format!("Task finished successfully in {:?}.", duration)).unwrap_or_default();
+        mp_clone_for_main_log.println(format!("  Total items read into broker: {}", final_read_count)).unwrap_or_default();
+        mp_clone_for_main_log.println(format!(
             "  Total items processed and sent to writer(s): {}",
             final_processed_and_sent_count
-        );
+        )).unwrap_or_default();
 
         let duration_sec = duration.as_secs_f64();
         if duration_sec > 0.0 {
             if final_read_count > 0 {
-                println!(
+                mp_clone_for_main_log.println(format!(
                     "  Approximate reader throughput: {:.2} items/sec",
                     final_read_count as f64 / duration_sec
-                );
+                )).unwrap_or_default();
             }
             if final_processed_and_sent_count > 0 {
-                println!(
+                mp_clone_for_main_log.println(format!(
                     "  Approximate processing throughput (to writer): {:.2} items/sec",
                     final_processed_and_sent_count as f64 / duration_sec
-                );
+                )).unwrap_or_default();
             }
         }
+        mp_clone_for_main_log.clear().unwrap_or_default();
         Ok(())
     }
 }

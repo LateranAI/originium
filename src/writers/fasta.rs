@@ -5,8 +5,9 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use tokio::sync::mpsc::Receiver;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::fmt::Debug;
+use std::sync::Arc;
 
 pub struct FastaWriter<T: Send + Sync + 'static + Debug + Into<FastaRecord>> {
     final_path: PathBuf,
@@ -17,7 +18,7 @@ pub struct FastaWriter<T: Send + Sync + 'static + Debug + Into<FastaRecord>> {
 impl<T: Send + Sync + 'static + Debug + Into<FastaRecord>> FastaWriter<T> {
     pub fn new(path: String, line_width: Option<usize>) -> Self {
         let width = line_width.unwrap_or(70);
-        println!(
+        eprintln!(
             "[FastaWriter] Initialized for path: {}. Sequence line width: {}",
             path, width
         );
@@ -34,6 +35,7 @@ impl<T: Send + Sync + 'static + Debug + Into<FastaRecord>> Writer<T> for FastaWr
     async fn pipeline(
         &self,
         mut rx: Receiver<T>,
+        mp: Arc<MultiProgress>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start_time = std::time::Instant::now();
         let mut items_written: u64 = 0;
@@ -41,7 +43,7 @@ impl<T: Send + Sync + 'static + Debug + Into<FastaRecord>> Writer<T> for FastaWr
         let file = File::create(&self.final_path)?;
         let mut writer = BufWriter::new(file);
 
-        let pb_items = ProgressBar::new_spinner();
+        let pb_items = mp.add(ProgressBar::new_spinner());
         pb_items.enable_steady_tick(std::time::Duration::from_millis(120));
         pb_items.set_style(
             ProgressStyle::with_template(
@@ -77,12 +79,12 @@ impl<T: Send + Sync + 'static + Debug + Into<FastaRecord>> Writer<T> for FastaWr
         pb_items.finish_with_message(format!("[FastaWriter] Record writing complete. {} records written.", items_written));
 
         let duration = start_time.elapsed();
-        println!(
+        mp.println(format!(
             "[FastaWriter] Finished successfully in {:?}. Output: {}. Total records: {}",
             duration,
             self.final_path.display(),
             items_written
-        );
+        )).unwrap_or_default();
 
         Ok(())
     }

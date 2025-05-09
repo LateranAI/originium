@@ -4,7 +4,7 @@ use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 use std::io::{SeekFrom, Read, Seek};
 use std::sync::Arc;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
 use memchr::memchr_iter;
 use tokio::sync::mpsc;
 use num_cpus;
@@ -52,7 +52,7 @@ impl LineReader {
             LineFormat::PlainText => PLAINTEXT_READER_CONFIG,
         };
 
-        println!(
+        eprintln!(
             "[{}] Using {} threads for parallel reading file: {}",
             selected_config.reader_type_name,
             num_threads,
@@ -74,12 +74,14 @@ where
     async fn pipeline(
         &self,
         read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         pipeline_core(
             self.path.clone(),
             self.num_threads,
             read_fn,
             Arc::clone(&self.config),
+            mp,
         )
         .await
     }
@@ -111,8 +113,9 @@ pub fn scan_line_offsets_core(
     num_threads: usize,
     file_size: u64,
     config: &LineReaderConfig,
+    mp: Arc<MultiProgress>,
 ) -> Arc<Vec<u64>> {
-    let pb_scan = ProgressBar::new(file_size);
+    let pb_scan = mp.add(ProgressBar::new(file_size));
     pb_scan.set_style(
         ProgressStyle::with_template(config.scan_progress_template)
             .unwrap()
@@ -291,68 +294,91 @@ pub async fn pipeline_core<Item>(
     num_threads: usize,
     read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
     config: Arc<LineReaderConfig>,
+    mp: Arc<MultiProgress>,
 ) -> mpsc::Receiver<Item>
 where
     Item: DeserializeOwned + Send + Sync + 'static + Debug,
 {
-    let file_metadata = match std::fs::metadata(&file_path_str) {
-        Ok(meta) => meta,
+    let (tx, rx) = mpsc::channel::<Item>(num_threads * 2);
+
+    let file_size = match TokioFile::open(file_path_str.clone()).await {
+        Ok(file) => match file.metadata().await {
+            Ok(metadata) => metadata.len(),
+            Err(e) => {
+                eprintln!(
+                    "[{}] Failed to get metadata for {}: {}. Cannot determine file size for progress.",
+                    config.reader_type_name, file_path_str, e
+                );
+                0
+            }
+        },
         Err(e) => {
             eprintln!(
-                "[{}] Failed to get file metadata for {}: {}",
+                "[{}] Failed to open file {}: {}. Cannot determine file size for progress.",
                 config.reader_type_name, file_path_str, e
             );
-            let (tx, rx_consumer) = mpsc::channel(1);
-            drop(tx);
-            return rx_consumer;
+            0
         }
     };
-    let file_size = file_metadata.len();
 
     if file_size == 0 {
-        println!(
-            "[{}] Input file is empty: {}.",
-            config.reader_type_name, file_path_str
+        eprintln!(
+            "[{}] File size is 0 or could not be determined for {}. No lines will be processed.",
+            config.reader_type_name,
+            file_path_str
         );
-        let (tx, rx_consumer) = mpsc::channel(1);
         drop(tx);
-        return rx_consumer;
+        return rx;
     }
 
-    let line_offsets = scan_line_offsets_core(&file_path_str, num_threads, file_size, &config);
-
-    let num_actual_lines_to_process = if line_offsets.is_empty() {
-        0
-    } else {
-        line_offsets.len()
-    };
-
-    if num_actual_lines_to_process == 0 {
-        println!(
-            "[{}] No lines to process (file empty or scan found no lines/valid segments): {}. Offsets: {:?}",
-            config.reader_type_name, file_path_str, line_offsets
+    let line_offsets = tokio::task::spawn_blocking({
+        let path_clone_for_scan = file_path_str.clone();
+        let config_clone_for_scan = Arc::clone(&config);
+        let mp_clone_for_scan = Arc::clone(&mp);
+        move || {
+            scan_line_offsets_core(
+                &path_clone_for_scan,
+                num_threads,
+                file_size,
+                &config_clone_for_scan,
+                mp_clone_for_scan,
+            )
+        }
+    })
+    .await
+    .unwrap_or_else(|e| {
+        eprintln!(
+            "[{}] Panic in scan_line_offsets_core for {}: {:?}. Returning empty offsets.",
+            config.reader_type_name, file_path_str, e
         );
-        let (tx, rx_consumer) = mpsc::channel(1);
-        drop(tx);
-        return rx_consumer;
+        Arc::new(Vec::new())
+    });
+
+    if line_offsets.is_empty() && file_size > 0 {
+        eprintln!(
+            "[{}] No line offsets found for {}, though file size is {}. Check file content and newline characters.",
+            config.reader_type_name,
+            file_path_str,
+            file_size
+        );
     }
-
-    let (tx_producer, rx_consumer) = mpsc::channel(num_threads * 100);
-    let parser = Arc::new(read_fn);
-
-    let pb_process = ProgressBar::new(num_actual_lines_to_process as u64);
+    
+    let total_lines = line_offsets.len();
+    let pb_process = mp.add(ProgressBar::new(total_lines as u64));
     pb_process.set_style(
         ProgressStyle::with_template(config.process_progress_template)
             .unwrap()
             .progress_chars("##-"),
     );
 
+    let parser = Arc::new(read_fn);
+
     let mut worker_handles = vec![];
 
-    let lines_per_thread_ideal = (num_actual_lines_to_process + num_threads - 1) / num_threads;
+    let lines_per_thread_ideal = (total_lines + num_threads - 1) / num_threads;
 
     for i in 0..num_threads {
-        let tx_clone = tx_producer.clone();
+        let tx_clone = tx.clone();
         let parser_clone = Arc::clone(&parser);
         let file_path_clone_str = file_path_str.clone();
         let offsets_clone = Arc::clone(&line_offsets);
@@ -361,14 +387,14 @@ where
 
         let start_line_idx_in_offsets = i * lines_per_thread_ideal;
         let mut end_line_idx_in_offsets =
-            ((i + 1) * lines_per_thread_ideal).min(num_actual_lines_to_process);
+            ((i + 1) * lines_per_thread_ideal).min(total_lines);
 
         if start_line_idx_in_offsets >= end_line_idx_in_offsets {
             continue;
         }
 
         if i == num_threads - 1 {
-            end_line_idx_in_offsets = num_actual_lines_to_process;
+            end_line_idx_in_offsets = total_lines;
         }
 
         worker_handles.push(tokio::spawn(async move {
@@ -453,7 +479,7 @@ where
         }));
     }
 
-    drop(tx_producer);
+    drop(tx);
 
     tokio::spawn(async move {
         for handle in worker_handles {
@@ -472,5 +498,5 @@ where
         }
     });
 
-    rx_consumer
+    rx
 }

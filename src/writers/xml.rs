@@ -5,8 +5,9 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use tokio::sync::mpsc::Receiver;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::fmt::Debug;
+use std::sync::Arc;
 
 pub struct XmlWriter<T: Serialize + Send + Sync + 'static + Debug> {
     final_path: PathBuf,
@@ -18,7 +19,7 @@ pub struct XmlWriter<T: Serialize + Send + Sync + 'static + Debug> {
 impl<T: Serialize + Send + Sync + 'static + Debug> XmlWriter<T> {
 
     pub fn new(path: String, root_tag: Option<String>, item_tag: String) -> Self {
-        println!(
+        eprintln!(
             "[XmlWriter] Initialized for path: {}. Root tag: {:?}, Item tag: <{}>",
             path, root_tag, item_tag
         );
@@ -38,6 +39,7 @@ impl<T: Serialize + Send + Sync + 'static + Debug> Writer<T> for XmlWriter<T> {
     async fn pipeline(
         &self,
         mut rx: Receiver<T>,
+        mp: Arc<MultiProgress>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start_time = std::time::Instant::now();
         let mut items_written: u64 = 0;
@@ -53,7 +55,7 @@ impl<T: Serialize + Send + Sync + 'static + Debug> Writer<T> for XmlWriter<T> {
             writer.write_all(format!("<{}>\n", tag).as_bytes())?;
         }
 
-        let pb_items = ProgressBar::new_spinner();
+        let pb_items = mp.add(ProgressBar::new_spinner());
         pb_items.enable_steady_tick(std::time::Duration::from_millis(120));
         pb_items.set_style(
             ProgressStyle::with_template(
@@ -96,12 +98,12 @@ impl<T: Serialize + Send + Sync + 'static + Debug> Writer<T> for XmlWriter<T> {
         pb_items.finish_with_message(format!("[XmlWriter] Item writing complete. {} items written.", items_written));
 
         let duration = start_time.elapsed();
-        println!(
+        mp.println(format!(
             "[XmlWriter] Finished successfully in {:?}. Output: {}. Total items: {}",
             duration,
             self.final_path.display(),
             items_written
-        );
+        )).unwrap_or_default();
 
         Ok(())
     }
