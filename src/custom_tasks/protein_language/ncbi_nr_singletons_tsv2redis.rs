@@ -56,16 +56,15 @@ impl Task for TaskNcbiNrSingletonsTsvToRedis {
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::LineDelimited {
-            path: "/public/home/ssjxzkz/Datasets/prot/ncbi_nr/processed/nr.singletons.tsv".to_string(),
+            path: "/public/home/ssjxzkz/Datasets/prot/ncbi_nr/processed/nr.singletons.tsv"
+                .to_string(),
             format: LineFormat::Tsv,
         }]
     }
 
     fn get_outputs_info() -> Vec<DataEndpoint> {
         if TEST_MODE {
-            vec![DataEndpoint::Debug {
-                prefix: None,
-            }]
+            vec![DataEndpoint::Debug { prefix: None }]
         } else {
             vec![DataEndpoint::Redis {
                 url: "redis://:ssjxzkz@10.100.1.98:6379/2".to_string(),
@@ -124,7 +123,10 @@ impl Task for TaskNcbiNrSingletonsTsvToRedis {
                     value: value_as_string,
                 }))
             }
-            Ok(None) => Ok(None),
+            Ok(None) => {
+                // eprintln!("[Task:NcbiNrSingletonsTsvToRedis] Protein ID '{}' (key: '{}') not found in sequence Redis. Skipping.", protein_id_from_tsv, seq_query_key);
+                Ok(None)
+            }
             Err(e) => {
                 eprintln!(
                     "[Task:NcbiNrSingletonsTsvToRedis] Redis GET error for protein ID '{}' (key: '{}'): {:?}. Skipping item.",

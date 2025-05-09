@@ -200,8 +200,6 @@ pub trait Task: Clone + Send + Sync + 'static {
         } else {
             let mut transform_targets = Vec::new();
 
-            let transform_targets_for_closure = transform_targets.clone();
-
             for output_config in &output_configs {
                 let writer_instance = self.get_writer(output_config).await?;
 
@@ -223,6 +221,8 @@ pub trait Task: Clone + Send + Sync + 'static {
 
                 transform_targets.push((output_config.clone(), tx_to_writer));
             }
+
+            let transform_targets_for_closure = transform_targets.clone();
 
             let task_processor = self.clone();
 
@@ -302,10 +302,10 @@ pub trait Task: Clone + Send + Sync + 'static {
 
                                                 if current_rate > prev_rate * 1.10 {
                                                     current_max_concurrency = (current_max_concurrency * 2).clamp(min_concurrency, max_concurrency);
-                                                    println!(
-                                                        "[Task: {}] Concurrency increased: {} -> {} (Rate: {:.2}items/s vs {:.2}items/s @ {} tasks).",
-                                                        task_name, old_concurrency_for_log, current_max_concurrency, current_rate, prev_rate, prev_perf.concurrency
-                                                    );
+                                                    // println!(
+                                                    //     "[Task: {}] Concurrency increased: {} -> {} (Rate: {:.2}items/s vs {:.2}items/s @ {} tasks).",
+                                                    //     task_name, old_concurrency_for_log, current_max_concurrency, current_rate, prev_rate, prev_perf.concurrency
+                                                    // );
                                                 } else if current_rate < prev_rate * 0.90 {
                                                     let increase_amount = if concurrency_during_this_batch > prev_perf.concurrency {
                                                         concurrency_during_this_batch - prev_perf.concurrency
@@ -319,16 +319,16 @@ pub trait Task: Clone + Send + Sync + 'static {
                                                     } else {
                                                         current_max_concurrency = (current_max_concurrency * 3 / 4).clamp(min_concurrency, max_concurrency);
                                                     }
-                                                    println!(
-                                                        "[Task: {}] Concurrency decreased: {} -> {} (Rate: {:.2}items/s vs {:.2}items/s @ {} tasks).",
-                                                        task_name, old_concurrency_for_log, current_max_concurrency, current_rate, prev_rate, prev_perf.concurrency
-                                                    );
+                                                    // println!(
+                                                    //     "[Task: {}] Concurrency decreased: {} -> {} (Rate: {:.2}items/s vs {:.2}items/s @ {} tasks).",
+                                                    //     task_name, old_concurrency_for_log, current_max_concurrency, current_rate, prev_rate, prev_perf.concurrency
+                                                    // );
                                                 } else {
                                                     dynamic_adjustment_enabled = false;
-                                                    println!(
-                                                        "[Task: {}] Concurrency stable at {}. Locking. (Rate: {:.2}items/s vs {:.2}items/s @ {} tasks).",
-                                                        task_name, current_max_concurrency, current_rate, prev_rate, prev_perf.concurrency
-                                                    );
+                                                    // println!(
+                                                    //     "[Task: {}] Concurrency stable at {}. Locking. (Rate: {:.2}items/s vs {:.2}items/s @ {} tasks).",
+                                                    //     task_name, current_max_concurrency, current_rate, prev_rate, prev_perf.concurrency
+                                                    // );
                                                 }
                                             } else {
                                                 let old_concurrency_for_log = current_max_concurrency;
