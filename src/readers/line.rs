@@ -73,12 +73,12 @@ where
 {
     async fn pipeline(
         &self,
-        read_logic: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
     ) -> mpsc::Receiver<Item> {
         pipeline_core(
             self.path.clone(),
             self.num_threads,
-            read_logic,
+            read_fn,
             Arc::clone(&self.config),
         )
         .await
@@ -289,7 +289,7 @@ pub fn scan_line_offsets_core(
 pub async fn pipeline_core<Item>(
     file_path_str: String,
     num_threads: usize,
-    read_logic: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+    read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
     config: Arc<LineReaderConfig>,
 ) -> mpsc::Receiver<Item>
 where
@@ -338,7 +338,7 @@ where
     }
 
     let (tx_producer, rx_consumer) = mpsc::channel(num_threads * 100);
-    let parser = Arc::new(read_logic);
+    let parser = Arc::new(read_fn);
 
     let pb_process = ProgressBar::new(num_actual_lines_to_process as u64);
     pb_process.set_style(

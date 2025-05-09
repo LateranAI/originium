@@ -1,7 +1,7 @@
 pub mod redis;
 pub mod rwkv_binidx;
 pub mod debug;
-pub mod line_writer;
+pub mod line;
 pub mod xml;
 pub mod fasta;
 pub mod sql;

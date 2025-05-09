@@ -1,7 +1,8 @@
-pub mod line_reader;
+pub mod line;
 pub mod xml;
 pub mod fasta;
 pub mod sql;
+pub mod redis;
 
 use std::fmt::Debug;
 use tokio::sync::mpsc;

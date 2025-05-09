@@ -1,21 +1,14 @@
-use crate::custom_tasks::{DataEndpoint, FrameworkError, Task, Writer, LineFormat};
+use crate::custom_tasks::{DataEndpoint, FrameworkError, LineFormat, Task, Writer};
 use crate::writers::redis::RedisWriter;
 use std::fmt::Display;
 
 use crate::utils::common_type::{LineInput, RedisKVPair};
 use crate::writers::debug::DebugWriter;
 use crate::TEST_MODE;
-use serde::Deserialize;
 use serde_json;
-use sqlx::FromRow;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-#[derive(Debug, Clone, FromRow, Deserialize)]
-pub struct TextLine {
-    pub value: String,
-    pub text: String,
-}
 
 #[derive(Clone)]
 pub struct TaskNcbiNrSoftlabelsJsonl2Redis {

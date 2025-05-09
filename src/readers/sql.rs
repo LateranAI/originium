@@ -34,7 +34,7 @@ where
 {
     async fn pipeline(
         &self,
-        _read_logic: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        _read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(100);
         let pool_options = AnyPoolOptions::new()

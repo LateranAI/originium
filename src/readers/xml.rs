@@ -35,12 +35,12 @@ where
 
     async fn pipeline(
         &self,
-        read_logic: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(100);
         let file_path_str = self.path.clone();
         let record_tag_bytes = self.record_tag.as_bytes().to_vec();
-        let parser = Arc::new(read_logic);
+        let parser = Arc::new(read_fn);
 
 
         let file_size = std::fs::metadata(&file_path_str).map(|m| m.len()).unwrap_or(0);

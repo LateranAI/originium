@@ -77,7 +77,7 @@ pub trait Task: Clone + Send + Sync + 'static {
         for input_config in input_configs {
             let reader_instance: Box<dyn Reader<Self::InputItem>> = match &input_config {
                 DataEndpoint::LineDelimited { path, format } => Box::new(
-                    crate::readers::line_reader::LineReader::new(path.clone(), format.clone()),
+                    crate::readers::line::LineReader::new(path.clone(), format.clone()),
                 ),
                 DataEndpoint::Xml { path } => {
                     let record_tag = "record".to_string();
