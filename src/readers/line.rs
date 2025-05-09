@@ -10,13 +10,13 @@ use tokio::sync::mpsc;
 use num_cpus;
 use rayon::prelude::*;
 
-// Imports for Tokio async file operations, previously in base_line_reader
+
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader as TokioBufReader};
 
 use crate::custom_tasks::LineFormat;
 
-// --- Predefined Static Configurations ---
+
 const JSONL_READER_CONFIG: LineReaderConfig = LineReaderConfig {
     reader_type_name: "JsonlReader",
     scan_progress_template: "[{elapsed_precise}] [Scanning JSONL lines {bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})",
@@ -34,7 +34,7 @@ const PLAINTEXT_READER_CONFIG: LineReaderConfig = LineReaderConfig {
     scan_progress_template: "[{elapsed_precise}] [Scanning Text lines {bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})",
     process_progress_template: "[{elapsed_precise}] [Processing Text lines {bar:40.green/black}] {pos}/{len} ({per_sec}, {eta})",
 };
-// --- End Predefined Static Configurations ---
+
 
 pub struct LineReader {
     path: String,

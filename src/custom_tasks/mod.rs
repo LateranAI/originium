@@ -23,7 +23,7 @@ use crate::readers::fasta::FastaReader;
 use crate::readers::sql::SqlReader;
 use crate::readers::xml::XmlReader;
 
-// Define LineFormat enum
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LineFormat {
     Jsonl,
@@ -93,17 +93,15 @@ pub trait Task: Clone + Send + Sync + 'static {
                     Box::new(SqlReader::<Self::InputItem>::new(url.clone(), query))
                 }
                 DataEndpoint::Redis {
-                    url: _url,
-                    key_prefix: _key_prefix,
-                    max_concurrent_tasks: _max_concurrent_tasks,
+                    url,
+                    key_prefix,
+                    max_concurrent_tasks,
                 } => {
-                    return Err(FrameworkError::UnsupportedEndpointType {
-                        endpoint_description: format!(
-                            "SQL Reader (Redis) for {:?} pending FromRow solution for Task::InputItem",
-                            input_config
-                        ),
-                        operation_description: "Automated reader creation in Task::run".to_string(),
-                    });
+                    Box::new(crate::readers::redis::RedisReader::<Self::InputItem>::new(
+                        url.clone(), 
+                        key_prefix.clone(), 
+                        *max_concurrent_tasks
+                    ))
                 }
                 DataEndpoint::RwkvBinidx {
                     base_path: _base_path,
@@ -195,7 +193,7 @@ pub trait Task: Clone + Send + Sync + 'static {
                 transform_targets.push((output_config.clone(), tx_to_writer));
             }
 
-            let task_processor = self.clone(); // Clone self for the transform task
+            let task_processor = self.clone();
             let transform_task_handle = tokio::spawn(async move {
                 while let Some(input_item) = main_input_broker_rx.recv().await {
                     match task_processor.process(input_item.clone()).await {
@@ -225,7 +223,7 @@ pub trait Task: Clone + Send + Sync + 'static {
                                 "FrameworkError during item processing: {:?}. Aborting transform task.",
                                 e
                             );
-                            return Err(e); // Propagate the FrameworkError
+                            return Err(e);
                         }
                     }
                 }
