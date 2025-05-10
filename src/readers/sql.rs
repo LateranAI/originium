@@ -1,3 +1,4 @@
+use crate::custom_tasks::InputItem;
 use crate::readers::Reader;
 use async_trait::async_trait;
 use sqlx::any::{AnyPoolOptions, AnyRow};
@@ -35,7 +36,7 @@ where
 {
     async fn pipeline(
         &self,
-        _read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        _read_fn: Box<dyn Fn(InputItem) -> Item + Send + Sync + 'static>,
         mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(100);

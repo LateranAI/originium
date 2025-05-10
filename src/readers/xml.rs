@@ -1,3 +1,4 @@
+use crate::custom_tasks::InputItem;
 use crate::readers::Reader;
 use async_trait::async_trait;
 use quick_xml::events::Event;
@@ -35,7 +36,7 @@ where
 
     async fn pipeline(
         &self,
-        read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        read_fn: Box<dyn Fn(InputItem) -> Item + Send + Sync + 'static>,
         mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(100);
@@ -127,7 +128,7 @@ where
                                 match record_xml_string {
                                     Ok(xml_str) => {
 
-                                        let item = parser(xml_str);
+                                        let item = parser(InputItem::String(xml_str));
 
                                         let send_result = tx.blocking_send(item);
                                         if send_result.is_err() {

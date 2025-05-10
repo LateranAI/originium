@@ -1,3 +1,4 @@
+use crate::custom_tasks::InputItem;
 use crate::readers::Reader;
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -73,7 +74,7 @@ where
 {
     async fn pipeline(
         &self,
-        read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        read_fn: Box<dyn Fn(InputItem) -> Item + Send + Sync + 'static>,
         mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         pipeline_core(
@@ -292,7 +293,7 @@ pub fn scan_line_offsets_core(
 pub async fn pipeline_core<Item>(
     file_path_str: String,
     num_threads: usize,
-    read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+    read_fn: Box<dyn Fn(InputItem) -> Item + Send + Sync + 'static>,
     config: Arc<LineReaderConfig>,
     mp: Arc<MultiProgress>,
 ) -> mpsc::Receiver<Item>
@@ -447,7 +448,7 @@ where
             {
                 match lines_stream_async.next_line().await {
                     Ok(Some(line_content_str)) => {
-                        let item = parser_clone(line_content_str);
+                        let item = parser_clone(InputItem::String(line_content_str));
                         if tx_clone.send(item).await.is_err() {
                             pb_clone.println(format!(
                                 "[{}] Worker {} Receiver dropped. Stopping.",

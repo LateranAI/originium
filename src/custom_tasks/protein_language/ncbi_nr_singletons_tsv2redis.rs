@@ -1,4 +1,4 @@
-use crate::custom_tasks::{DataEndpoint, FrameworkError, LineFormat, Task, Writer};
+use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, LineFormat, Task, Writer};
 use crate::writers::redis::RedisWriter;
 
 use crate::utils::common_type::{LineInput, RedisKVPair};
@@ -51,7 +51,7 @@ impl TaskNcbiNrSingletonsTsvToRedis {
 
 #[async_trait::async_trait]
 impl Task for TaskNcbiNrSingletonsTsvToRedis {
-    type InputItem = LineInput;
+    type ReadItem = LineInput;
     type ProcessedItem = RedisKVPair;
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
@@ -67,20 +67,27 @@ impl Task for TaskNcbiNrSingletonsTsvToRedis {
             vec![DataEndpoint::Debug { prefix: None }]
         } else {
             vec![DataEndpoint::Redis {
-                url: "redis://:ssjxzkz@10.100.1.98:6379/2".to_string(),
+                url: "redis://:ssjxzkz@10.100.1.98:6379/1".to_string(),
                 key_prefix: "softlabel:".to_string(),
                 max_concurrent_tasks: 100,
             }]
         }
     }
 
-    fn read(&self) -> Box<dyn Fn(String) -> Self::InputItem + Send + Sync + 'static> {
-        Box::new(|line_str: String| -> Self::InputItem { LineInput { content: line_str } })
+    fn read(
+        &self,
+    ) -> Box<dyn Fn(InputItem) -> Self::ReadItem + Send + Sync + 'static> {
+        Box::new(|input_item: InputItem| -> Self::ReadItem {
+            match input_item {
+                InputItem::String(line_str) => LineInput { content: line_str },
+                _ => panic!("Expected InputItem::String, got {:?}", input_item),
+            }
+        })
     }
 
     async fn process(
         &self,
-        input_item: Self::InputItem,
+        input_item: Self::ReadItem,
     ) -> Result<Option<Self::ProcessedItem>, FrameworkError> {
         let tsv_line = input_item.content.trim();
         if tsv_line.is_empty() {
@@ -101,10 +108,10 @@ impl Task for TaskNcbiNrSingletonsTsvToRedis {
 
         match protein_seq_result {
             Ok(Some(protein_seq)) => {
-                // Create protein_id_list
-                let protein_id_list = vec![protein_id_from_tsv.clone()]; // protein_id_from_tsv is already a String
 
-                // Create softlabel_seq
+                let protein_id_list = vec![protein_id_from_tsv.clone()];
+
+
                 let mut softlabel_seq = Vec::new();
                 for char_val in protein_seq.chars() {
                     softlabel_seq.push(serde_json::json!({ char_val.to_string(): 1 }));
@@ -125,7 +132,8 @@ impl Task for TaskNcbiNrSingletonsTsvToRedis {
                 })?;
 
                 let current_id = self.id_counter.fetch_add(1, Ordering::SeqCst);
-                let output_key = format!("{}{}", "softlabel_singleton:", current_id);
+                let (_, key_prefix, _) = Self::get_outputs_info().get(0).unwrap().unwrap_redis();
+                let output_key = format!("{}{}", key_prefix, current_id);
 
                 Ok(Some(RedisKVPair {
                     key: output_key,
@@ -133,7 +141,6 @@ impl Task for TaskNcbiNrSingletonsTsvToRedis {
                 }))
             }
             Ok(None) => {
-                // eprintln!("[Task:NcbiNrSingletonsTsvToRedis] Protein ID '{}' (key: '{}') not found in sequence Redis. Skipping.", protein_id_from_tsv, seq_query_key);
                 Ok(None)
             }
             Err(e) => {

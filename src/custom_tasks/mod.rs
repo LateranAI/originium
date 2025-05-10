@@ -2,6 +2,7 @@ mod natural_language;
 pub mod protein_language;
 
 use crate::errors::FrameworkError;
+use crate::utils::common_type::FastaItem;
 
 use serde::Deserialize;
 use std::fmt::{Debug, Display};
@@ -46,7 +47,7 @@ pub enum LineFormat {
 
 #[async_trait::async_trait]
 pub trait Task: Clone + Send + Sync + 'static {
-    type InputItem: Send
+    type ReadItem: Send
         + Sync
         + 'static
         + Debug
@@ -59,11 +60,11 @@ pub trait Task: Clone + Send + Sync + 'static {
     fn get_inputs_info() -> Vec<DataEndpoint>;
     fn get_outputs_info() -> Vec<DataEndpoint>;
 
-    fn read(&self) -> Box<dyn Fn(String) -> Self::InputItem + Send + Sync + 'static>;
+    fn read(&self) -> Box<dyn Fn(InputItem) -> Self::ReadItem + Send + Sync + 'static>;
 
     async fn process(
         &self,
-        item: Self::InputItem,
+        item: Self::ReadItem,
     ) -> Result<Option<Self::ProcessedItem>, FrameworkError>;
 
     async fn get_writer(
@@ -94,7 +95,7 @@ pub trait Task: Clone + Send + Sync + 'static {
         let total_items_successfully_processed = Arc::new(AtomicUsize::new(0));
 
         let (main_input_broker_tx, mut main_input_broker_rx) =
-            mpsc::channel::<Self::InputItem>(100);
+            mpsc::channel::<Self::ReadItem>(100);
         let mut reader_handles = FuturesUnordered::new();
 
         let total_items_read_to_broker_for_readers = Arc::clone(&total_items_read_to_broker);
@@ -103,7 +104,7 @@ pub trait Task: Clone + Send + Sync + 'static {
             let items_counter_clone_for_reader =
                 Arc::clone(&total_items_read_to_broker_for_readers);
             for input_config in input_configs {
-                let reader_instance: Box<dyn Reader<Self::InputItem>> = match &input_config {
+                let reader_instance: Box<dyn Reader<Self::ReadItem>> = match &input_config {
                     DataEndpoint::LineDelimited { path, format } => Box::new(
                         crate::readers::line::LineReader::new(path.clone(), format.clone()),
                     ),
@@ -114,17 +115,17 @@ pub trait Task: Clone + Send + Sync + 'static {
                     DataEndpoint::Fasta { path } => Box::new(FastaReader::new(path.clone())),
                     DataEndpoint::Postgres { url, table } => {
                         let query = format!("SELECT * FROM {}", table);
-                        Box::new(SqlReader::<Self::InputItem>::new(url.clone(), query))
+                        Box::new(SqlReader::<Self::ReadItem>::new(url.clone(), query))
                     }
                     DataEndpoint::MySQL { url, table } => {
                         let query = format!("SELECT * FROM {}", table);
-                        Box::new(SqlReader::<Self::InputItem>::new(url.clone(), query))
+                        Box::new(SqlReader::<Self::ReadItem>::new(url.clone(), query))
                     }
                     DataEndpoint::Redis {
                         url,
                         key_prefix,
                         max_concurrent_tasks,
-                    } => Box::new(crate::readers::redis::RedisReader::<Self::InputItem>::new(
+                    } => Box::new(crate::readers::redis::RedisReader::<Self::ReadItem>::new(
                         url.clone(),
                         key_prefix.clone(),
                         *max_concurrent_tasks,
@@ -136,7 +137,7 @@ pub trait Task: Clone + Send + Sync + 'static {
                     } => {
                         return Err(FrameworkError::UnsupportedEndpointType {
                             endpoint_description: format!(
-                                "SQL Reader (RwkvBinidx) for {:?} pending FromRow solution for Task::InputItem",
+                                "SQL Reader (RwkvBinidx) for {:?} pending FromRow solution for Task::ReadItem",
                                 input_config
                             ),
                             operation_description: "Automated reader creation in Task::run"
@@ -323,11 +324,11 @@ pub trait Task: Clone + Send + Sync + 'static {
                                             } else {
                                                 let old_concurrency_for_log = current_max_concurrency;
                                                 current_max_concurrency = (current_max_concurrency * 2).clamp(min_concurrency, max_concurrency);
-                                                 // Ensure this println related to initial concurrency adjustment remains commented
-                                                 // mp.println(format!(
-                                                 //    "[Task: {}] Initial concurrency adjustment: {} -> {} (Batch time: {:.2}s).",
-                                                 //    task_name, old_concurrency_for_log, current_max_concurrency, current_batch_duration.as_secs_f32()
-                                                 // )).unwrap_or_default();
+
+
+
+
+
                                             }
 
                                             previous_perf_record = Some(current_perf);
@@ -344,7 +345,7 @@ pub trait Task: Clone + Send + Sync + 'static {
                                 Err(join_error) => {
                                     eprintln!("[Task: {}] Panicked/cancelled processing task: {:?}", task_name, join_error);
                                 }
-                            }
+                            _ => {}}
                         },
 
                         maybe_item_from_broker = main_input_broker_rx.recv(), if active_processing_tasks.len() < current_max_concurrency => {
@@ -590,4 +591,10 @@ impl DataEndpoint {
             panic!("Called unwrap_redis() on non-Redis endpoint");
         }
     }
+}
+
+#[derive(Debug)]
+pub enum InputItem {
+    String(String),
+    FastaItem(FastaItem),
 }

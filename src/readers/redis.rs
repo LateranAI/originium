@@ -1,3 +1,4 @@
+use crate::custom_tasks::InputItem;
 use crate::readers::Reader;
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
@@ -55,7 +56,7 @@ where
 {
     async fn pipeline(
         &self,
-        read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        read_fn: Box<dyn Fn(InputItem) -> Item + Send + Sync + 'static>,
         mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(self.max_concurrent_gets * 2);
@@ -136,13 +137,8 @@ where
                             async move {
                                 match task_con.get::<_, Option<String>>(&key).await {
                                     Ok(Some(value_str)) => {
-
-                                        let item = parser_clone(value_str);
+                                        let item = parser_clone(InputItem::String(value_str));
                                         if tx_clone.send(item).await.is_err() {
-
-
-
-
                                             return Err(());
                                         }
 
@@ -196,6 +192,6 @@ use crate::readers::redis_reader::RedisReader;
 
 
 DataEndpoint::Redis { url, key_prefix, max_concurrent_tasks } => {
-    Box::new(RedisReader::<Self::InputItem>::new(url.clone(), key_prefix.clone(), *max_concurrent_tasks))
+    Box::new(RedisReader::<Self::ReadItem>::new(url.clone(), key_prefix.clone(), *max_concurrent_tasks))
 }
 */

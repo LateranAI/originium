@@ -1,5 +1,5 @@
 use crate::writers::Writer;
-use crate::readers::fasta::FastaRecord;
+use crate::utils::common_type::FastaItem;
 use async_trait::async_trait;
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -9,13 +9,13 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::fmt::Debug;
 use std::sync::Arc;
 
-pub struct FastaWriter<T: Send + Sync + 'static + Debug + Into<FastaRecord>> {
+pub struct FastaWriter<T: Send + Sync + 'static + Debug + Into<FastaItem>> {
     final_path: PathBuf,
     line_width: usize,
     _phantom: std::marker::PhantomData<T>,
 }
 
-impl<T: Send + Sync + 'static + Debug + Into<FastaRecord>> FastaWriter<T> {
+impl<T: Send + Sync + 'static + Debug + Into<FastaItem>> FastaWriter<T> {
     pub fn new(path: String, line_width: Option<usize>) -> Self {
         let width = line_width.unwrap_or(70);
         eprintln!(
@@ -31,7 +31,7 @@ impl<T: Send + Sync + 'static + Debug + Into<FastaRecord>> FastaWriter<T> {
 }
 
 #[async_trait]
-impl<T: Send + Sync + 'static + Debug + Into<FastaRecord>> Writer<T> for FastaWriter<T> {
+impl<T: Send + Sync + 'static + Debug + Into<FastaItem>> Writer<T> for FastaWriter<T> {
     async fn pipeline(
         &self,
         mut rx: Receiver<T>,
@@ -52,20 +52,19 @@ impl<T: Send + Sync + 'static + Debug + Into<FastaRecord>> Writer<T> for FastaWr
         );
 
         while let Some(item) = rx.recv().await {
-            let record: FastaRecord = item.into();
+            let record: FastaItem = item.into();
 
-
-
-            let id_str = String::from_utf8_lossy(&record.id);
-
-
-            
             writer.write_all(b">")?;
-            writer.write_all(id_str.as_bytes())?;
+            writer.write_all(record.id.as_bytes())?;
+            if let Some(desc_str) = &record.desc {
+                if !desc_str.is_empty() {
+                    writer.write_all(b" ")?;
+                    writer.write_all(desc_str.as_bytes())?;
+                }
+            }
             writer.write_all(b"\n")?;
 
-
-            for chunk in record.seq.chunks(self.line_width) {
+            for chunk in record.seq.as_bytes().chunks(self.line_width) {
                 writer.write_all(chunk)?;
                 writer.write_all(b"\n")?;
             }

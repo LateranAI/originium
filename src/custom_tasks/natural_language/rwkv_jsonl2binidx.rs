@@ -1,4 +1,4 @@
-use crate::custom_tasks::{DataEndpoint, FrameworkError, Task, Writer, LineFormat};
+use crate::custom_tasks::{DataEndpoint, FrameworkError, Task, Writer, LineFormat, InputItem};
 use crate::utils::tokenizer::Tokenizer;
 use crate::writers::debug::DebugWriter;
 use crate::writers::rwkv_binidx::{BinidxItem, RwkvBinidxWriter};
@@ -32,7 +32,7 @@ impl TaskRwkvJsonlBindix {
 
 #[async_trait::async_trait]
 impl Task for TaskRwkvJsonlBindix {
-    type InputItem = LineInput;
+    type ReadItem = LineInput;
     type ProcessedItem = BinidxItem;
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
@@ -52,15 +52,18 @@ impl Task for TaskRwkvJsonlBindix {
 
     fn read(
         &self,
-    ) -> Box<dyn Fn(String) -> Self::InputItem + Send + Sync + 'static> {
-        Box::new(|line_str: String| -> Self::InputItem { 
-            LineInput { content: line_str } 
+    ) -> Box<dyn Fn(InputItem) -> Self::ReadItem + Send + Sync + 'static> {
+        Box::new(|input_item: InputItem| -> Self::ReadItem {
+            match input_item {
+                InputItem::String(line_str) => LineInput { content: line_str },
+                _ => panic!("Expected InputItem::String, got {:?}", input_item),
+            }
         })
     }
 
     async fn process(
         &self,
-        input_item: Self::InputItem,
+        input_item: Self::ReadItem,
     ) -> Result<Option<Self::ProcessedItem>, FrameworkError> {
         let json_line_str = input_item.content;
         

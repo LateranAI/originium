@@ -4,6 +4,7 @@ pub mod fasta;
 pub mod sql;
 pub mod redis;
 
+use crate::custom_tasks::InputItem;
 use std::fmt::Debug;
 use tokio::sync::mpsc;
 use std::sync::Arc;
@@ -16,7 +17,7 @@ where
 {
     async fn pipeline(
         &self,
-        read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        read_fn: Box<dyn Fn(InputItem) -> Item + Send + Sync + 'static>,
         mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item>
     where

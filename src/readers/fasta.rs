@@ -1,19 +1,13 @@
+use crate::custom_tasks::InputItem;
 use crate::readers::Reader;
+use crate::utils::common_type::FastaItem;
 use async_trait::async_trait;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use needletail::{parse_fastx_file, /*parser::SequenceRecord,*/ /*FastxReader*/};
+use needletail::{parse_fastx_file /*, Sequence*/};
+use serde_json;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-
-
-
-#[derive(Debug, Clone)]
-pub struct FastaRecord {
-    pub id: Vec<u8>,
-    pub seq: Vec<u8>,
-
-}
 
 pub struct FastaReader {
     path: String,
@@ -32,16 +26,11 @@ impl FastaReader {
 #[async_trait]
 impl<Item> Reader<Item> for FastaReader
 where
-
-
-
-    Item: Send + Sync + 'static + Debug, 
-
+    Item: Send + Sync + 'static + Debug,
 {
     async fn pipeline(
         &self,
-
-        read_fn: Box<dyn Fn(String) -> Item + Send + Sync + 'static>,
+        read_fn: Box<dyn Fn(InputItem) -> Item + Send + Sync + 'static>,
         mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(100);
@@ -52,9 +41,10 @@ where
         let pb_process = mp.add(ProgressBar::new(file_size));
         pb_process.set_style(
             ProgressStyle::with_template(
-                "[{elapsed_precise}] [Processing Fasta {bar:40.yellow/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
-            ).unwrap()
+                "[{elapsed_precise}] [Fasta {file_path}] {bar:40.cyan/blue} {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
+            ).unwrap().progress_chars("##-"),
         );
+        pb_process.set_message(file_path_str.split('/').last().unwrap_or_default().to_string());
 
         tokio::task::spawn_blocking(move || {
             let mut reader = match parse_fastx_file(&file_path_str) {
@@ -71,28 +61,42 @@ where
             while let Some(record_result) = reader.next() {
                 match record_result {
                     Ok(record) => {
-
-                        let seq_string = String::from_utf8_lossy(&record.seq()).to_string();
+                        let full_header_bytes = record.id();
+                        let full_header_str = String::from_utf8_lossy(full_header_bytes);
                         
-
-                        let item = parser(seq_string);
+                        let mut parts = full_header_str.splitn(2, |c: char| c.is_whitespace());
+                        let truncated_id = parts.next().unwrap_or("").to_string();
+                        
+                        let description = parts.next().map(|s| s.trim()).filter(|s| !s.is_empty()).map(str::to_string);
+                        
+                        let sequence_str = String::from_utf8_lossy(&record.seq()).to_string();
+                        
+                        let fasta_item = FastaItem {
+                            id: truncated_id,
+                            desc: description,
+                            seq: sequence_str,
+                        };
+                        
+                        let item = parser(InputItem::FastaItem(fasta_item));
                         
                         if tx.blocking_send(item).is_err() {
-                            eprintln!("[FastaReader] Receiver dropped. Stopping Fasta processing.");
+                            eprintln!("[FastaReader] Receiver dropped. Stopping Fasta processing for {}.", file_path_str);
                             break;
                         }
                         item_count += 1;
+                        pb_process.inc(record.num_bases() as u64);
 
                     }
                     Err(e) => {
-                        eprintln!("[FastaReader] Error reading Fasta record: {}", e);
-                        break;
+                        eprintln!("[FastaReader] Error reading Fasta record from {}: {}", file_path_str, e);
+                        break; 
                     }
                 }
             }
             
-            pb_process.set_position(file_size);
-            pb_process.finish_with_message(format!("[FastaReader] Finished processing {}. Records found: {}", file_path_str, item_count));
+            if pb_process.position() < file_size && item_count > 0 {
+            }
+            pb_process.finish_with_message(format!("[FastaReader] Done: {}. Records: {}.", file_path_str.split('/').last().unwrap_or_default(), item_count));
         });
 
         rx
