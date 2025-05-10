@@ -1,6 +1,6 @@
 # Originium Data Framework: 高效异步数据处理流水线
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust Version](https://img.shields.io/badge/rust-1.70%2B-blue.svg)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust Version](https://img.shields.io/badge/rust-1.70%2B-blue.svg)](https://www.rust-lang.org)[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/LateranAI/originium)
 
 **Originium** 是一个基于 Rust 构建的、高度可扩展的异步数据处理框架。它旨在简化和加速IO密集型任务的开发，通过提供一个清晰的流水线模型，将数据读取、处理和写入解耦，充分利用异步操作的性能优势。
 
