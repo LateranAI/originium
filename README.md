@@ -29,7 +29,7 @@ Originium 旨在提供一个统一的解决方案，抽象化底层的IO操作�
 
 Originium 特别适用于**IO密集型任务**，例如：
 
-*   大规模数据集的格式转换（如 JSONL 转 Redis, FASTA 转 Binidx）。
+*   大规模数据集的格式转换（如 JSONL 转 Redis, FASTA 转自定义二进制/内存映射索引格式 (Mmap)）。
 *   数据清洗、规范化和预处理。
 *   从多种数据源聚合信息并写入数据库。
 *   实时数据流的初步处理和分发。
@@ -135,7 +135,13 @@ pub enum InputItem {
 *   `Postgres { url: String, table: String }`: PostgreSQL 数据库表 (读取时 `table` 用于 `SELECT * FROM table`, 写入时指定目标表)。
 *   `MySQL { url: String, table: String }`: MySQL 数据库表。
 *   `Redis { url: String, key_prefix: String, max_concurrent_tasks: usize }`: Redis 数据库。
-*   `RwkvBinidx { base_path: String, filename_prefix: String, num_threads: usize }`: RWKV项目的特定binidx格式。
+*   `Mmap { base_path: String, filename: String, num_threads: usize, token_unit_type: MmapTokenUnitType, token_unit_len: usize, is_legacy_rwkv_format: bool }`: 用于读写自定义的内存映射二进制索引格式（`.bin` 数据文件和 `.idx` 索引文件）。
+    *   `base_path`: `.bin` 和 `.idx` 文件所在的基础目录。
+    *   `filename`: 文件名（不含扩展名）。
+    *   `num_threads`: 并行处理时使用的线程数。
+    *   `token_unit_type`: 定义数据文件中每个最小单元的类型 (例如 `U16` 代表 `u16`, `F32` 代表 `f32`)。
+    *   `token_unit_len`: 定义一个逻辑数据项由多少个 `token_unit_type` 单元组成 (例如，对于标准分词，通常为1；对于soft-label等可能大于1)。
+    *   `is_legacy_rwkv_format`: 布尔值，若为 `true`，则表示兼容旧版 RWKV 项目的特定 `.idx` 文件头格式 (版本1，DTYPE为 `u16` 类型)；若为 `false`，则使用新的通用格式 (版本2)，其 `.idx` 文件头会包含 `token_unit_type` 和 `token_unit_len` 信息。
 *   `Debug { prefix: Option<String> }`: 一个简单的调试写入器，将数据项打印到控制台。
 
 ### 5. `Reader` Trait
