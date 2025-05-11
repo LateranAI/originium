@@ -27,6 +27,7 @@ use tokio::task::JoinHandle;
 use indicatif::MultiProgress;
 
 use crate::readers::fasta::FastaReader;
+use crate::readers::mmap::MmapReader;
 use crate::readers::sql::SqlReader;
 use crate::readers::xml::XmlReader;
 
@@ -135,18 +136,11 @@ pub trait Task: Clone + Send + Sync + 'static {
                         *max_concurrent_tasks,
                     )),
                     DataEndpoint::Mmap {
-                        base_path: _base_path,
-                        filename: _filename,
+                        base_path,
+                        filename,
                         num_threads: _num_threads,
                     } => {
-                        return Err(FrameworkError::UnsupportedEndpointType {
-                            endpoint_description: format!(
-                                "SQL Reader (RwkvBinidx) for {:?} pending FromRow solution for Task::ReadItem",
-                                input_config
-                            ),
-                            operation_description: "Automated reader creation in Task::run"
-                                .to_string(),
-                        });
+                        Box::new(MmapReader::new(base_path.clone(), filename.clone()))
                     }
                     DataEndpoint::Debug { .. } => {
                         return Err(FrameworkError::UnsupportedEndpointType {

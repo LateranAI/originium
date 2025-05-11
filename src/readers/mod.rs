@@ -3,7 +3,7 @@ pub mod xml;
 pub mod fasta;
 pub mod sql;
 pub mod redis;
-mod mmap;
+pub mod mmap;
 
 use crate::custom_tasks::InputItem;
 use std::fmt::Debug;
