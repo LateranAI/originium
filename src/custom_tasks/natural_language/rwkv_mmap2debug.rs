@@ -1,7 +1,7 @@
 use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, Task, Writer}; 
 use crate::utils::common_type::LineInput; // Ensure LineInput is available and derives FromRow, DeserializeOwned
 use crate::writers::debug::DebugWriter;
-use crate::writers::mmap::MmapBinidxItem; // This is our target logical item for processing
+use crate::writers::mmap::MmapItem; // This is our target logical item for processing
 use serde_json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
@@ -28,7 +28,7 @@ impl Task for TaskRwkvMmap2Debug {
     // Our read() fn will wrap this string into LineInput.
     type ReadItem = LineInput; 
     // ProcessedItem is what we actually want to debug print.
-    type ProcessedItem = MmapBinidxItem; 
+    type ProcessedItem = MmapItem;
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::Mmap {
@@ -74,7 +74,7 @@ impl Task for TaskRwkvMmap2Debug {
                     reason: format!("TaskMmap2Debug: Failed to deserialize Vec<u16> from JSON: {}", e)
                 })?;
             // Construct the MmapBinidxItem (our ProcessedItem)
-            Ok(Some(MmapBinidxItem { tokens }))
+            Ok(Some(MmapItem { tokens }))
         } else {
             if current_count == MAX_ITEMS_TO_PRINT { // Log only once when limit is reached
                  println!("[TaskMmap2Debug] Processed {} items. Further items will be filtered out from printing.", MAX_ITEMS_TO_PRINT);

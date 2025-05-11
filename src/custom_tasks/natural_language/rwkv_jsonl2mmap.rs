@@ -2,7 +2,7 @@ use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, LineFormat, T
 use crate::utils::common_type::LineInput;
 use crate::utils::tokenizer::Tokenizer;
 use crate::writers::debug::DebugWriter;
-use crate::writers::mmap::{MmapBinidxItem, MmapBinidxWriter};
+use crate::writers::mmap::{MmapItem, MmapWriter};
 use serde::Deserialize;
 use serde_json;
 use std::sync::Arc;
@@ -36,7 +36,7 @@ impl TaskRwkvJsonl2Mmap {
 #[async_trait::async_trait]
 impl Task for TaskRwkvJsonl2Mmap {
     type ReadItem = LineInput;
-    type ProcessedItem = MmapBinidxItem;
+    type ProcessedItem = MmapItem;
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::LineDelimited {
@@ -82,7 +82,7 @@ impl Task for TaskRwkvJsonl2Mmap {
         };
 
         let tokens = self.tokenizer.encode(&text_record.text, true);
-        Ok(Some(MmapBinidxItem { tokens }))
+        Ok(Some(MmapItem { tokens }))
     }
 
     async fn get_writer(
@@ -97,7 +97,7 @@ impl Task for TaskRwkvJsonl2Mmap {
             } => {
                 println!("Configuring MmapBinidxWriter for output.");
                 let writer =
-                    MmapBinidxWriter::new(base_path.clone(), filename.clone(), *num_threads);
+                    MmapWriter::new(base_path.clone(), filename.clone(), *num_threads);
                 Ok(Box::new(writer))
             }
             DataEndpoint::Debug { prefix } => {

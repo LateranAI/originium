@@ -17,29 +17,15 @@ use tokio::sync::mpsc::{channel, Sender as TokioSender};
 use tokio::task::JoinHandle;
 use std::sync::Arc;
 use crate::errors::FrameworkError;
-
-
+use crate::utils::common_type::MmapItem;
 
 const MMAP_BINIDX_MAGIC_HDR: &[u8] = b"MMIDIDX\x00\x00";
 const MMAP_BINIDX_VERSION: [u8; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
 const MMAP_BINIDX_DTYPE: [u8; 1] = [8u8];
 
 
-#[derive(Debug, Clone, Serialize)]
-pub struct MmapBinidxItem {
-    pub tokens: Vec<u16>,
-}
-
-
-impl std::fmt::Display for MmapBinidxItem {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MmapBinidxItem(tokens: [{}])", self.tokens.len())
-    }
-}
-
-
 struct TempBinWorkerPayload {
-    item: Option<MmapBinidxItem>,
+    item: Option<MmapItem>,
 
 }
 
@@ -52,19 +38,14 @@ struct TempBinWorkerResult {
 }
 
 
-
-
-
-
-
-pub struct MmapBinidxWriter<T: Serialize + Send + Sync + 'static + Debug + Into<MmapBinidxItem>> {
+pub struct MmapWriter<T: Serialize + Send + Sync + 'static + Debug + Into<MmapItem>> {
     output_base_path: PathBuf,
     output_filename: String,
     num_processing_workers: usize,
     _phantom_data: PhantomData<T>,
 }
 
-impl<T: Serialize + Send + Sync + 'static + Debug + Into<MmapBinidxItem>> MmapBinidxWriter<T> {
+impl<T: Serialize + Send + Sync + 'static + Debug + Into<MmapItem>> MmapWriter<T> {
     pub fn new(output_base_path_str: String, output_filename: String, num_workers: usize) -> Self {
         if num_workers == 0 {
 
@@ -85,7 +66,7 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<MmapBinidxItem>> MmapBi
 }
 
 #[async_trait]
-impl<T: Serialize + Send + Sync + 'static + Debug + Into<MmapBinidxItem>> Writer<T> for MmapBinidxWriter<T> {
+impl<T: Serialize + Send + Sync + 'static + Debug + Into<MmapItem>> Writer<T> for MmapWriter<T> {
     async fn pipeline(
         &self,
         mut incoming_item_rx: TokioReceiver<T>,
@@ -97,7 +78,7 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<MmapBinidxItem>> Writer
         )).unwrap_or_default();
         let overall_start_time = Instant::now();
 
-        let (coordinator_input_tx, mut coordinator_input_rx): (TokioSender<Option<MmapBinidxItem>>, TokioReceiver<Option<MmapBinidxItem>>) = channel(self.num_processing_workers * 2);
+        let (coordinator_input_tx, mut coordinator_input_rx): (TokioSender<Option<MmapItem>>, TokioReceiver<Option<MmapItem>>) = channel(self.num_processing_workers * 2);
         let (worker_result_tx, worker_result_rx): (StdSender<TempBinWorkerResult>, StdReceiver<TempBinWorkerResult>) = mpsc::channel();
 
         let num_workers_for_coord = self.num_processing_workers;
@@ -112,10 +93,10 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<MmapBinidxItem>> Writer
 
             rt.block_on(async {
                 let mut worker_join_handles: Vec<JoinHandle<()>> = Vec::with_capacity(num_workers_for_coord);
-                let mut worker_task_senders: Vec<TokioSender<Option<MmapBinidxItem>>> = Vec::with_capacity(num_workers_for_coord);
+                let mut worker_task_senders: Vec<TokioSender<Option<MmapItem>>> = Vec::with_capacity(num_workers_for_coord);
 
                 for worker_idx in 0..num_workers_for_coord {
-                    let (worker_task_tx, mut worker_task_rx): (TokioSender<Option<MmapBinidxItem>>, TokioReceiver<Option<MmapBinidxItem>>) = channel(100);
+                    let (worker_task_tx, mut worker_task_rx): (TokioSender<Option<MmapItem>>, TokioReceiver<Option<MmapItem>>) = channel(100);
                     worker_task_senders.push(worker_task_tx);
                     let result_sender_for_worker = worker_result_tx.clone();
                     let temp_file_base_for_worker = base_path_for_coord.join(format!("{}_temp_worker_{}", filename_for_coord, worker_idx));
@@ -192,7 +173,7 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<MmapBinidxItem>> Writer
 
         let forward_to_coord_handle = tokio::spawn(async move {
             while let Some(item_t_from_caller) = incoming_item_rx.recv().await {
-                let mmap_bin_item: MmapBinidxItem = item_t_from_caller.into();
+                let mmap_bin_item: MmapItem = item_t_from_caller.into();
                 if coordinator_input_tx.send(Some(mmap_bin_item)).await.is_err() {
                     eprintln!("[MmapBinidxWriter] Failed to send item to coordinator. Coordinator likely terminated.");
                     break;
@@ -254,7 +235,7 @@ impl<T: Serialize + Send + Sync + 'static + Debug + Into<MmapBinidxItem>> Writer
     }
 }
 
-impl<T: Serialize + Send + Sync + 'static + Debug + Into<MmapBinidxItem>> MmapBinidxWriter<T> {
+impl<T: Serialize + Send + Sync + 'static + Debug + Into<MmapItem>> MmapWriter<T> {
     fn merge_temp_bin_files(
         &self,
         worker_results: &[TempBinWorkerResult],
