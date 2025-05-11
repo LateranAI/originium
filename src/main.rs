@@ -1,3 +1,4 @@
+use crate::custom_tasks::natural_language::rwkv_jsonl2mmap::TaskRwkvJsonlBindix;
 use crate::custom_tasks::protein_language::ncbi_nr_singletons_tsv2redis::TaskNcbiNrSingletonsTsvToRedis;
 
 use crate::custom_tasks::protein_language::ncbi_nr_eukaryota_fasta2redis::TaskNcbiNrEukaryotaFastaToRedis;
@@ -15,8 +16,8 @@ const TEST_MODE: bool = false;
 #[tokio::main]
 async fn main() {
     println!("Tasks start!");
-
-    println!("Attempting to run Task NcbiNr Eukaryota Fasta To Redis...");
+    
+    println!("Running Task NcbiNr Eukaryota Fasta To Redis...");
     let eukaryota_task = TaskNcbiNrEukaryotaFastaToRedis::new();
     if let Err(e) = eukaryota_task.run().await {
         eprintln!("Task NcbiNr Eukaryota Fasta To Redis execution failed: {:?}", e);
@@ -44,4 +45,14 @@ async fn main() {
         );
     }
     println!("Task NcbiNr Singletons Tsv To Redis invocation completed.");
+
+    println!("Running Task RWKV Jsonl To Mmap...");
+    let task_rwkv = TaskRwkvJsonlBindix::new();
+    if let Err(e) = task_rwkv.run().await {
+        eprintln!(
+            "Task RWKV Jsonl To Mmap execution failed: {:?}",
+            e
+        );
+    }
+    println!("Task RWKV Jsonl To Mmap invocation completed.");
 }

@@ -1,11 +1,11 @@
-use crate::custom_tasks::{DataEndpoint, FrameworkError, Task, Writer, LineFormat, InputItem};
+use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, LineFormat, Task, Writer};
+use crate::utils::common_type::LineInput;
 use crate::utils::tokenizer::Tokenizer;
 use crate::writers::debug::DebugWriter;
-use crate::writers::rwkv_binidx::{BinidxItem, RwkvBinidxWriter};
+use crate::writers::mmap::{MmapBinidxItem, MmapBinidxWriter};
 use serde::Deserialize;
 use serde_json;
 use std::sync::Arc;
-use crate::utils::common_type::LineInput;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TextRecord {
@@ -13,15 +13,18 @@ pub struct TextRecord {
 }
 
 #[derive(Clone)]
-pub struct TaskRwkvJsonlBindix {
+pub struct TaskRwkvJsonl2Mmap {
     pub inputs_info: Vec<DataEndpoint>,
     pub outputs_info: Vec<DataEndpoint>,
     tokenizer: Arc<Tokenizer>,
 }
 
-impl TaskRwkvJsonlBindix {
-    pub fn new(vocab_path: &str) -> Self {
-        let tokenizer = Arc::new(Tokenizer::new(vocab_path).expect("Failed to create tokenizer"));
+impl TaskRwkvJsonl2Mmap {
+    pub fn new() -> Self {
+        let tokenizer = Arc::new(
+            Tokenizer::new("/public/home/ssjxzkz/Projects/originium/assets/vocab_v20230424.txt")
+                .expect("Failed to create tokenizer"),
+        );
         Self {
             inputs_info: Self::get_inputs_info(),
             outputs_info: Self::get_outputs_info(),
@@ -31,28 +34,26 @@ impl TaskRwkvJsonlBindix {
 }
 
 #[async_trait::async_trait]
-impl Task for TaskRwkvJsonlBindix {
+impl Task for TaskRwkvJsonl2Mmap {
     type ReadItem = LineInput;
-    type ProcessedItem = BinidxItem;
+    type ProcessedItem = MmapBinidxItem;
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::LineDelimited {
-            path: "./data/input.jsonl".to_string(),
+            path: "/public/home/ssjxzkz/Projects/rhineai/data/test_dataset/test.jsonl".to_string(),
             format: LineFormat::Jsonl,
         }]
     }
 
     fn get_outputs_info() -> Vec<DataEndpoint> {
-        vec![DataEndpoint::RwkvBinidx {
-            base_path: "./data/output".to_string(),
-            filename_prefix: "rwkv_data".to_string(),
+        vec![DataEndpoint::Mmap {
+            base_path: "/public/home/ssjxzkz/Projects/rhineai/data/target/datasets.bin".to_string(),
+            filename: "rwkv_data".to_string(),
             num_threads: num_cpus::get().max(1),
         }]
     }
 
-    fn read(
-        &self,
-    ) -> Box<dyn Fn(InputItem) -> Self::ReadItem + Send + Sync + 'static> {
+    fn read(&self) -> Box<dyn Fn(InputItem) -> Self::ReadItem + Send + Sync + 'static> {
         Box::new(|input_item: InputItem| -> Self::ReadItem {
             match input_item {
                 InputItem::String(line_str) => LineInput { content: line_str },
@@ -66,7 +67,7 @@ impl Task for TaskRwkvJsonlBindix {
         input_item: Self::ReadItem,
     ) -> Result<Option<Self::ProcessedItem>, FrameworkError> {
         let json_line_str = input_item.content;
-        
+
         let text_record: TextRecord = match serde_json::from_str(&json_line_str) {
             Ok(record) => record,
             Err(e) => {
@@ -81,7 +82,7 @@ impl Task for TaskRwkvJsonlBindix {
         };
 
         let tokens = self.tokenizer.encode(&text_record.text, true);
-        Ok(Some(BinidxItem { tokens }))
+        Ok(Some(MmapBinidxItem { tokens }))
     }
 
     async fn get_writer(
@@ -89,19 +90,14 @@ impl Task for TaskRwkvJsonlBindix {
         endpoint_config: &DataEndpoint,
     ) -> Result<Box<dyn Writer<Self::ProcessedItem>>, FrameworkError> {
         match endpoint_config {
-            DataEndpoint::RwkvBinidx {
+            DataEndpoint::Mmap {
                 base_path,
-                filename_prefix,
+                filename,
                 num_threads,
             } => {
-                println!("Configuring RwkvBinidxWriter for output.");
+                println!("Configuring MmapBinidxWriter for output.");
                 let writer =
-                    RwkvBinidxWriter::new(base_path.clone(), filename_prefix.clone(), *num_threads)
-                        .map_err(|e| FrameworkError::ComponentBuildError {
-                            component_type: "RwkvBinidxWriter".to_string(),
-                            endpoint_description: format!("{:?}", endpoint_config),
-                            reason: e.to_string(),
-                        })?;
+                    MmapBinidxWriter::new(base_path.clone(), filename.clone(), *num_threads);
                 Ok(Box::new(writer))
             }
             DataEndpoint::Debug { prefix } => {

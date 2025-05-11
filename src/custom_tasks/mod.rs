@@ -1,4 +1,4 @@
-mod natural_language;
+pub mod natural_language;
 pub mod protein_language;
 
 use crate::errors::FrameworkError;
@@ -76,26 +76,30 @@ pub trait Task: Clone + Send + Sync + 'static {
         let mp = Arc::new(MultiProgress::new());
         let mp_clone_for_main_log = Arc::clone(&mp);
 
-        mp.println("Starting Task (Framework Run V10 - MultiProgress Enabled)").unwrap_or_default();
+        mp.println("Starting Task (Framework Run V10 - MultiProgress Enabled)")
+            .unwrap_or_default();
         let start_time = std::time::Instant::now();
 
         let input_configs = Self::get_inputs_info();
         let output_configs = Self::get_outputs_info();
 
         if input_configs.is_empty() {
-            mp.println("No input endpoints configured. Task will not process any data.").unwrap_or_default();
+            mp.println("No input endpoints configured. Task will not process any data.")
+                .unwrap_or_default();
             let duration = start_time.elapsed();
-            mp.println(format!("Task finished (no input) in {:?}.", duration)).unwrap_or_default();
-            mp.println(format!("  Total items read into broker: 0")).unwrap_or_default();
-            mp.println(format!("  Total items processed and sent to writer(s): 0")).unwrap_or_default();
+            mp.println(format!("Task finished (no input) in {:?}.", duration))
+                .unwrap_or_default();
+            mp.println(format!("  Total items read into broker: 0"))
+                .unwrap_or_default();
+            mp.println(format!("  Total items processed and sent to writer(s): 0"))
+                .unwrap_or_default();
             return Ok(());
         }
 
         let total_items_read_to_broker = Arc::new(AtomicUsize::new(0));
         let total_items_successfully_processed = Arc::new(AtomicUsize::new(0));
 
-        let (main_input_broker_tx, mut main_input_broker_rx) =
-            mpsc::channel::<Self::ReadItem>(100);
+        let (main_input_broker_tx, mut main_input_broker_rx) = mpsc::channel::<Self::ReadItem>(100);
         let mut reader_handles = FuturesUnordered::new();
 
         let total_items_read_to_broker_for_readers = Arc::clone(&total_items_read_to_broker);
@@ -130,9 +134,9 @@ pub trait Task: Clone + Send + Sync + 'static {
                         key_prefix.clone(),
                         *max_concurrent_tasks,
                     )),
-                    DataEndpoint::RwkvBinidx {
+                    DataEndpoint::Mmap {
                         base_path: _base_path,
-                        filename_prefix: _filename_prefix,
+                        filename: _filename,
                         num_threads: _num_threads,
                     } => {
                         return Err(FrameworkError::UnsupportedEndpointType {
@@ -157,7 +161,8 @@ pub trait Task: Clone + Send + Sync + 'static {
                 let read_fn = self.read();
                 let mp_clone_for_reader = Arc::clone(&mp);
 
-                let mut reader_output_rx = reader_instance.pipeline(read_fn, mp_clone_for_reader).await;
+                let mut reader_output_rx =
+                    reader_instance.pipeline(read_fn, mp_clone_for_reader).await;
 
                 let tx_clone = main_input_broker_tx.clone();
                 let config_desc_for_error = format!("{:?}", input_config);
@@ -189,7 +194,8 @@ pub trait Task: Clone + Send + Sync + 'static {
 
         drop(main_input_broker_tx);
 
-        mp.println("All reader pipelines configured and forwarding tasks spawned.").unwrap_or_default();
+        mp.println("All reader pipelines configured and forwarding tasks spawned.")
+            .unwrap_or_default();
 
         let mut transform_handles =
             FuturesUnordered::<JoinHandle<Result<usize, FrameworkError>>>::new();
@@ -198,12 +204,14 @@ pub trait Task: Clone + Send + Sync + 'static {
             FuturesUnordered::<JoinHandle<Result<(), FrameworkError>>>::new();
 
         if output_configs.is_empty() {
-            mp.println("No output endpoints configured. Consuming and discarding all input items.").unwrap_or_default();
+            mp.println("No output endpoints configured. Consuming and discarding all input items.")
+                .unwrap_or_default();
             let mut count = 0;
             while let Some(_item) = main_input_broker_rx.recv().await {
                 count += 1;
             }
-            mp.println(format!("Drained {} items from input broker.", count)).unwrap_or_default();
+            mp.println(format!("Drained {} items from input broker.", count))
+                .unwrap_or_default();
         } else {
             let mut transform_targets = Vec::new();
 
@@ -301,7 +309,7 @@ pub trait Task: Clone + Send + Sync + 'static {
                                             if let Some(prev_perf) = previous_perf_record {
                                                 let prev_rate = ADJUSTMENT_BATCH_SIZE as f64 / prev_perf.duration.as_secs_f64().max(f64::EPSILON);
                                                 let current_rate = ADJUSTMENT_BATCH_SIZE as f64 / current_batch_duration.as_secs_f64().max(f64::EPSILON);
-                                                let old_concurrency_for_log = current_max_concurrency;
+                                                let _old_concurrency_for_log = current_max_concurrency;
 
                                                 if current_rate > prev_rate * 1.10 {
                                                     current_max_concurrency = (current_max_concurrency * 2).clamp(min_concurrency, max_concurrency);
@@ -322,13 +330,8 @@ pub trait Task: Clone + Send + Sync + 'static {
                                                     dynamic_adjustment_enabled = false;
                                                 }
                                             } else {
-                                                let old_concurrency_for_log = current_max_concurrency;
+                                                let _old_concurrency_for_log = current_max_concurrency;
                                                 current_max_concurrency = (current_max_concurrency * 2).clamp(min_concurrency, max_concurrency);
-
-
-
-
-
                                             }
 
                                             previous_perf_record = Some(current_perf);
@@ -345,7 +348,8 @@ pub trait Task: Clone + Send + Sync + 'static {
                                 Err(join_error) => {
                                     eprintln!("[Task: {}] Panicked/cancelled processing task: {:?}", task_name, join_error);
                                 }
-                            _ => {}}
+                                _ => {}
+                            }
                         },
 
                         maybe_item_from_broker = main_input_broker_rx.recv(), if active_processing_tasks.len() < current_max_concurrency => {
@@ -409,7 +413,8 @@ pub trait Task: Clone + Send + Sync + 'static {
             transform_handles.push(transform_and_dispatch_handle);
         }
 
-        mp.println("Awaiting reader forwarding tasks...").unwrap_or_default();
+        mp.println("Awaiting reader forwarding tasks...")
+            .unwrap_or_default();
         while let Some(result) = reader_handles.next().await {
             match result {
                 Ok(Ok(())) => { /* Task completed successfully */ }
@@ -430,9 +435,11 @@ pub trait Task: Clone + Send + Sync + 'static {
                 }
             }
         }
-        mp.println("All reader forwarding tasks completed.").unwrap_or_default();
+        mp.println("All reader forwarding tasks completed.")
+            .unwrap_or_default();
 
-        mp.println("Awaiting transformation tasks...").unwrap_or_default();
+        mp.println("Awaiting transformation tasks...")
+            .unwrap_or_default();
 
         while let Some(result) = transform_handles.next().await {
             match result {
@@ -457,9 +464,11 @@ pub trait Task: Clone + Send + Sync + 'static {
                 }
             }
         }
-        mp.println("All transformation tasks completed.").unwrap_or_default();
+        mp.println("All transformation tasks completed.")
+            .unwrap_or_default();
 
-        mp.println("Awaiting writer completion tasks...").unwrap_or_default();
+        mp.println("Awaiting writer completion tasks...")
+            .unwrap_or_default();
         while let Some(result) = writer_completion_handles.next().await {
             match result {
                 Ok(Ok(())) => { /* Writer completed successfully */ }
@@ -477,33 +486,47 @@ pub trait Task: Clone + Send + Sync + 'static {
                 }
             }
         }
-        mp.println("All writer tasks completed.").unwrap_or_default();
+        mp.println("All writer tasks completed.")
+            .unwrap_or_default();
 
         let duration = start_time.elapsed();
         let final_read_count = total_items_read_to_broker.load(AtomicOrdering::Relaxed);
         let final_processed_and_sent_count =
             total_items_successfully_processed.load(AtomicOrdering::Relaxed);
 
-        mp_clone_for_main_log.println(format!("Task finished successfully in {:?}.", duration)).unwrap_or_default();
-        mp_clone_for_main_log.println(format!("  Total items read into broker: {}", final_read_count)).unwrap_or_default();
-        mp_clone_for_main_log.println(format!(
-            "  Total items processed and sent to writer(s): {}",
-            final_processed_and_sent_count
-        )).unwrap_or_default();
+        mp_clone_for_main_log
+            .println(format!("Task finished successfully in {:?}.", duration))
+            .unwrap_or_default();
+        mp_clone_for_main_log
+            .println(format!(
+                "  Total items read into broker: {}",
+                final_read_count
+            ))
+            .unwrap_or_default();
+        mp_clone_for_main_log
+            .println(format!(
+                "  Total items processed and sent to writer(s): {}",
+                final_processed_and_sent_count
+            ))
+            .unwrap_or_default();
 
         let duration_sec = duration.as_secs_f64();
         if duration_sec > 0.0 {
             if final_read_count > 0 {
-                mp_clone_for_main_log.println(format!(
-                    "  Approximate reader throughput: {:.2} items/sec",
-                    final_read_count as f64 / duration_sec
-                )).unwrap_or_default();
+                mp_clone_for_main_log
+                    .println(format!(
+                        "  Approximate reader throughput: {:.2} items/sec",
+                        final_read_count as f64 / duration_sec
+                    ))
+                    .unwrap_or_default();
             }
             if final_processed_and_sent_count > 0 {
-                mp_clone_for_main_log.println(format!(
-                    "  Approximate processing throughput (to writer): {:.2} items/sec",
-                    final_processed_and_sent_count as f64 / duration_sec
-                )).unwrap_or_default();
+                mp_clone_for_main_log
+                    .println(format!(
+                        "  Approximate processing throughput (to writer): {:.2} items/sec",
+                        final_processed_and_sent_count as f64 / duration_sec
+                    ))
+                    .unwrap_or_default();
             }
         }
         mp_clone_for_main_log.clear().unwrap_or_default();
@@ -539,9 +562,9 @@ pub enum DataEndpoint {
         key_prefix: String,
         max_concurrent_tasks: usize,
     },
-    RwkvBinidx {
+    Mmap {
         base_path: String,
-        filename_prefix: String,
+        filename: String,
         num_threads: usize,
     },
 }
@@ -589,6 +612,19 @@ impl DataEndpoint {
             (url.clone(), key_prefix.clone(), *max_concurrent_tasks)
         } else {
             panic!("Called unwrap_redis() on non-Redis endpoint");
+        }
+    }
+
+    pub fn unwrap_mmap(&self) -> (String, String, usize) {
+        if let DataEndpoint::Mmap {
+            base_path,
+            filename,
+            num_threads,
+        } = self
+        {
+            (base_path.clone(), filename.clone(), num_threads.clone())
+        } else {
+            panic!("Called unwrap_mmap() on non-Mmap endpoint")
         }
     }
 }

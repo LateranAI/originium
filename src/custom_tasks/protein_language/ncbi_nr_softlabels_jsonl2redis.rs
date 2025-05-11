@@ -1,6 +1,5 @@
 use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, LineFormat, Task, Writer};
 use crate::writers::redis::RedisWriter;
-use std::fmt::Display;
 
 use crate::utils::common_type::{LineInput, RedisKVPair};
 use crate::writers::debug::DebugWriter;

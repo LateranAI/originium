@@ -7,7 +7,6 @@ use crate::writers::redis::RedisWriter;
 use async_trait::async_trait;
 use glob::glob;
 
-use serde_json;
 
 
 #[derive(Clone)]
