@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow};
 use std::fmt::{Display, Formatter};
+use bytemuck::{Pod, Zeroable};
+use std::fmt::Debug;
 
 #[derive(Debug, Clone, Deserialize, FromRow)]
 pub struct LineInput {
@@ -27,15 +29,38 @@ pub struct FastaItem {
     pub seq: String,
 }
 
-
-#[derive(Debug, Clone, Serialize)]
-pub struct MmapItem {
-    pub tokens: Vec<u16>,
+impl Display for FastaItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, ">{} [length: {}]\\n{}", self.id, self.seq.len(), self.seq)
+    }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum MmapTokenUnitType {
+    U16 = 1,
+    F32 = 2,
+}
 
-impl Display for MmapItem {
+impl Default for MmapTokenUnitType {
+    fn default() -> Self {
+        MmapTokenUnitType::U16
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MmapItem<TokenUnit>
+where
+    TokenUnit: Pod + Zeroable + Copy + Clone + Debug + Serialize + Send + Sync + 'static,
+{
+    pub tokens: Vec<TokenUnit>,
+}
+
+impl<TokenUnit> Display for MmapItem<TokenUnit>
+where
+    TokenUnit: Pod + Zeroable + Copy + Clone + Debug + Serialize + Send + Sync + 'static,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MmapBinidxItem(tokens: [{}])", self.tokens.len())
+        write!(f, "MmapItem(units_count: {})", self.tokens.len())
     }
 }

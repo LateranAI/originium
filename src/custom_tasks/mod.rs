@@ -2,7 +2,7 @@ pub mod natural_language;
 pub mod protein_language;
 
 use crate::errors::FrameworkError;
-use crate::utils::common_type::FastaItem;
+use crate::utils::common_type::{FastaItem, MmapTokenUnitType};
 
 use serde::Deserialize;
 use std::fmt::{Debug, Display};
@@ -136,11 +136,17 @@ pub trait Task: Clone + Send + Sync + 'static {
                         *max_concurrent_tasks,
                     )),
                     DataEndpoint::Mmap {
-                        base_path,
-                        filename,
-                        num_threads: _num_threads,
+                        token_unit_type,
+                        ..
                     } => {
-                        Box::new(MmapReader::new(base_path.clone(), filename.clone()))
+                        match token_unit_type {
+                            MmapTokenUnitType::U16 => {
+                                Box::new(MmapReader::<Self::ReadItem, u16>::new(&input_config))
+                            }
+                            MmapTokenUnitType::F32 => {
+                                Box::new(MmapReader::<Self::ReadItem, f32>::new(&input_config))
+                            }
+                        }
                     }
                     DataEndpoint::Debug { .. } => {
                         return Err(FrameworkError::UnsupportedEndpointType {
@@ -342,7 +348,6 @@ pub trait Task: Clone + Send + Sync + 'static {
                                 Err(join_error) => {
                                     eprintln!("[Task: {}] Panicked/cancelled processing task: {:?}", task_name, join_error);
                                 }
-                                _ => {}
                             }
                         },
 
@@ -560,6 +565,9 @@ pub enum DataEndpoint {
         base_path: String,
         filename: String,
         num_threads: usize,
+        token_unit_type: MmapTokenUnitType,
+        token_unit_len: usize,
+        is_legacy_rwkv_format: bool,
     },
 }
 
@@ -609,14 +617,24 @@ impl DataEndpoint {
         }
     }
 
-    pub fn unwrap_mmap(&self) -> (String, String, usize) {
+    pub fn unwrap_mmap(&self) -> (String, String, usize, MmapTokenUnitType, usize, bool) {
         if let DataEndpoint::Mmap {
             base_path,
             filename,
             num_threads,
+            token_unit_type,
+            token_unit_len,
+            is_legacy_rwkv_format,
         } = self
         {
-            (base_path.clone(), filename.clone(), num_threads.clone())
+            (
+                base_path.clone(),
+                filename.clone(),
+                *num_threads,
+                *token_unit_type,
+                *token_unit_len,
+                *is_legacy_rwkv_format,
+            )
         } else {
             panic!("Called unwrap_mmap() on non-Mmap endpoint")
         }

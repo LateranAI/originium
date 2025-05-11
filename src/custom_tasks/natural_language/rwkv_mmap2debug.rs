@@ -1,7 +1,7 @@
 use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, Task, Writer}; 
-use crate::utils::common_type::LineInput; // Ensure LineInput is available and derives FromRow, DeserializeOwned
+use crate::utils::common_type::{LineInput, MmapItem, MmapTokenUnitType}; // Ensure MmapItem and MmapTokenUnitType are imported
 use crate::writers::debug::DebugWriter;
-use crate::writers::mmap::MmapItem; // This is our target logical item for processing
+// MmapItem is used directly, no MmapBinidxItem anymore
 use serde_json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
@@ -28,14 +28,17 @@ impl Task for TaskRwkvMmap2Debug {
     // Our read() fn will wrap this string into LineInput.
     type ReadItem = LineInput; 
     // ProcessedItem is what we actually want to debug print.
-    type ProcessedItem = MmapItem;
+    type ProcessedItem = MmapItem<u16>; // Changed to MmapItem<u16>
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::Mmap {
             // Paths as per TaskRwkvJsonl2Mmap's output configuration
             base_path: "/public/home/ssjxzkz/Projects/rhineai/data/target/datasets.bin".to_string(), 
             filename: "rwkv_data".to_string(),         
-            num_threads: 1, // Not directly used by MmapReader for its core logic but part of DataEndpoint::Mmap
+            num_threads: 1, // Not used by reader for instantiation, but part of endpoint definition
+            token_unit_type: MmapTokenUnitType::U16,    // Added: Expect U16 tokens
+            token_unit_len: 1,                          // Added: Each logical token is 1 U16
+            is_legacy_rwkv_format: false,               // Added: Expect new format (matching writer)
         }]
     }
 
@@ -74,7 +77,7 @@ impl Task for TaskRwkvMmap2Debug {
                     reason: format!("TaskMmap2Debug: Failed to deserialize Vec<u16> from JSON: {}", e)
                 })?;
             // Construct the MmapBinidxItem (our ProcessedItem)
-            Ok(Some(MmapItem { tokens }))
+            Ok(Some(MmapItem { tokens })) // Changed to MmapItem { tokens }
         } else {
             if current_count == MAX_ITEMS_TO_PRINT { // Log only once when limit is reached
                  println!("[TaskMmap2Debug] Processed {} items. Further items will be filtered out from printing.", MAX_ITEMS_TO_PRINT);

@@ -1,8 +1,8 @@
 use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, LineFormat, Task, Writer};
-use crate::utils::common_type::LineInput;
+use crate::utils::common_type::{LineInput, MmapItem, MmapTokenUnitType};
 use crate::utils::tokenizer::Tokenizer;
 use crate::writers::debug::DebugWriter;
-use crate::writers::mmap::{MmapItem, MmapWriter};
+use crate::writers::mmap::MmapWriter;
 use serde::Deserialize;
 use serde_json;
 use std::sync::Arc;
@@ -14,8 +14,6 @@ pub struct TextRecord {
 
 #[derive(Clone)]
 pub struct TaskRwkvJsonl2Mmap {
-    pub inputs_info: Vec<DataEndpoint>,
-    pub outputs_info: Vec<DataEndpoint>,
     tokenizer: Arc<Tokenizer>,
 }
 
@@ -26,8 +24,6 @@ impl TaskRwkvJsonl2Mmap {
                 .expect("Failed to create tokenizer"),
         );
         Self {
-            inputs_info: Self::get_inputs_info(),
-            outputs_info: Self::get_outputs_info(),
             tokenizer,
         }
     }
@@ -36,7 +32,7 @@ impl TaskRwkvJsonl2Mmap {
 #[async_trait::async_trait]
 impl Task for TaskRwkvJsonl2Mmap {
     type ReadItem = LineInput;
-    type ProcessedItem = MmapItem;
+    type ProcessedItem = MmapItem<u16>;
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::LineDelimited {
@@ -50,6 +46,9 @@ impl Task for TaskRwkvJsonl2Mmap {
             base_path: "/public/home/ssjxzkz/Projects/rhineai/data/target/datasets.bin".to_string(),
             filename: "rwkv_data".to_string(),
             num_threads: num_cpus::get().max(1),
+            token_unit_type: MmapTokenUnitType::U16,
+            token_unit_len: 1,
+            is_legacy_rwkv_format: false,
         }]
     }
 
@@ -72,7 +71,7 @@ impl Task for TaskRwkvJsonl2Mmap {
             Ok(record) => record,
             Err(e) => {
                 return Err(FrameworkError::PipelineError {
-                    component_name: "TaskRwkvJsonlBindix::process".to_string(),
+                    component_name: "TaskRwkvJsonl2Mmap::process".to_string(),
                     source: Box::new(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         format!("JSON line parsing failed: {}. Line: {}", e, json_line_str),
@@ -90,18 +89,11 @@ impl Task for TaskRwkvJsonl2Mmap {
         endpoint_config: &DataEndpoint,
     ) -> Result<Box<dyn Writer<Self::ProcessedItem>>, FrameworkError> {
         match endpoint_config {
-            DataEndpoint::Mmap {
-                base_path,
-                filename,
-                num_threads,
-            } => {
-                println!("Configuring MmapBinidxWriter for output.");
-                let writer =
-                    MmapWriter::new(base_path.clone(), filename.clone(), *num_threads);
+            DataEndpoint::Mmap { .. } => {
+                let writer = MmapWriter::<Self::ProcessedItem, u16>::new(endpoint_config);
                 Ok(Box::new(writer))
             }
             DataEndpoint::Debug { prefix } => {
-                println!("Configuring DebugWriter for output.");
                 let writer = match prefix {
                     Some(p) => DebugWriter::<Self::ProcessedItem>::with_prefix(p.as_str()),
                     None => DebugWriter::<Self::ProcessedItem>::new(),
@@ -110,7 +102,7 @@ impl Task for TaskRwkvJsonl2Mmap {
             }
             _ => Err(FrameworkError::UnsupportedEndpointType {
                 endpoint_description: format!("{:?}", endpoint_config),
-                operation_description: "get_writer in TaskRwkvJsonlBindix".to_string(),
+                operation_description: "get_writer in TaskRwkvJsonl2Mmap".to_string(),
             }),
         }
     }
