@@ -1,13 +1,11 @@
-use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, Task, Writer};
 use crate::TEST_MODE;
+use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, Task, Writer};
 
 use crate::utils::common_type::{FastaItem, RedisKVPair};
 use crate::writers::debug::DebugWriter;
 use crate::writers::redis::RedisWriter;
 use async_trait::async_trait;
 use glob::glob;
-
-
 
 #[derive(Clone)]
 pub struct TaskNcbiNrEukaryotaFastaToRedis;
@@ -34,7 +32,6 @@ impl Task for TaskNcbiNrEukaryotaFastaToRedis {
                         Ok(path_buf) => {
                             if path_buf.is_file() {
                                 inputs.push(DataEndpoint::Fasta {
-
                                     path: path_buf.to_string_lossy().into_owned(),
                                 });
                             }
@@ -51,8 +48,6 @@ impl Task for TaskNcbiNrEukaryotaFastaToRedis {
                     "[TaskNcbiNrEukaryotaFastaToRedis] Failed to read glob pattern \"{}\": {:?}",
                     pattern, e
                 );
-
-
             }
         }
         if inputs.is_empty() {
@@ -82,8 +77,6 @@ impl Task for TaskNcbiNrEukaryotaFastaToRedis {
             }]
         }
     }
-
-
 
     fn read(&self) -> Box<dyn Fn(InputItem) -> Self::ReadItem + Send + Sync + 'static> {
         Box::new(|input_item: InputItem| -> Self::ReadItem {
@@ -147,13 +140,3 @@ impl Task for TaskNcbiNrEukaryotaFastaToRedis {
         }
     }
 }
-
-
-
-
-
-
-
-
-
-

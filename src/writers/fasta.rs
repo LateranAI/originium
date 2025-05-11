@@ -1,13 +1,13 @@
-use crate::writers::Writer;
 use crate::utils::common_type::FastaItem;
+use crate::writers::Writer;
 use async_trait::async_trait;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use tokio::sync::mpsc::Receiver;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use std::fmt::Debug;
 use std::sync::Arc;
+use tokio::sync::mpsc::Receiver;
 
 pub struct FastaWriter<T: Send + Sync + 'static + Debug + Into<FastaItem>> {
     final_path: PathBuf,
@@ -75,7 +75,10 @@ impl<T: Send + Sync + 'static + Debug + Into<FastaItem>> Writer<T> for FastaWrit
 
         writer.flush()?;
 
-        pb_items.finish_with_message(format!("[FastaWriter] Record writing complete. {} records written.", items_written));
+        pb_items.finish_with_message(format!(
+            "[FastaWriter] Record writing complete. {} records written.",
+            items_written
+        ));
 
         let duration = start_time.elapsed();
         mp.println(format!(
@@ -83,8 +86,9 @@ impl<T: Send + Sync + 'static + Debug + Into<FastaItem>> Writer<T> for FastaWrit
             duration,
             self.final_path.display(),
             items_written
-        )).unwrap_or_default();
+        ))
+        .unwrap_or_default();
 
         Ok(())
     }
-} 
+}

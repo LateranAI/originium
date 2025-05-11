@@ -1,10 +1,14 @@
+use crate::custom_tasks::DataEndpoint;
 use crate::custom_tasks::InputItem;
 use crate::readers::Reader;
+use crate::utils::common_type::MmapTokenUnitType;
 use async_trait::async_trait;
+use bytemuck::{Pod, Zeroable};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use memmap2::{Mmap, MmapOptions};
 use moka::sync::Cache;
 use serde_json;
+use std::fmt::Debug;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::marker::PhantomData;
@@ -12,10 +16,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use bytemuck::{Pod, Zeroable};
-use crate::utils::common_type::MmapTokenUnitType;
-use crate::custom_tasks::DataEndpoint;
-use std::fmt::Debug;
 
 const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 100;
 
@@ -51,7 +51,7 @@ fn get_item_units_from_data<TokenUnit>(
     item_byte_offsets: &[u64],
     token_unit_len: usize,
     item_cache: &Cache<usize, Arc<Vec<TokenUnit>>>,
-) -> Option<Arc<Vec<TokenUnit>>> 
+) -> Option<Arc<Vec<TokenUnit>>>
 where
     TokenUnit: Pod + Zeroable + Copy + Clone + Debug + serde::Serialize + Send + Sync + 'static,
 {
@@ -63,7 +63,10 @@ where
         return Some(cached_units);
     }
 
-    let logical_token_count = item_logical_token_counts.get(item_index).copied().unwrap_or(0) as usize;
+    let logical_token_count = item_logical_token_counts
+        .get(item_index)
+        .copied()
+        .unwrap_or(0) as usize;
     if logical_token_count == 0 {
         let arc_units = Arc::new(Vec::new());
         item_cache.insert(item_index, arc_units.clone());
@@ -76,10 +79,10 @@ where
     if byte_offset >= bin_mmap.len() {
         return None;
     }
-    
+
     let unit_size_bytes = std::mem::size_of::<TokenUnit>();
     if unit_size_bytes == 0 {
-        return None; 
+        return None;
     }
     let byte_length = total_units_for_item.checked_mul(unit_size_bytes)?;
     let end_offset = byte_offset.checked_add(byte_length)?;
@@ -89,7 +92,7 @@ where
     }
 
     let token_bytes_slice = bin_mmap.get(byte_offset..end_offset)?;
-    
+
     match bytemuck::try_cast_slice::<u8, TokenUnit>(token_bytes_slice) {
         Ok(units_slice) => {
             let units_vec: Vec<TokenUnit> = units_slice.to_vec();
@@ -98,7 +101,14 @@ where
             Some(arc_units)
         }
         Err(e) => {
-            eprintln!("[MmapReader::get_item_units_from_data] Failed to cast slice for item {}: {:?}. Bytes len: {}, Expected units: {}. Unit size: {}", item_index, e, token_bytes_slice.len(), total_units_for_item, unit_size_bytes);
+            eprintln!(
+                "[MmapReader::get_item_units_from_data] Failed to cast slice for item {}: {:?}. Bytes len: {}, Expected units: {}. Unit size: {}",
+                item_index,
+                e,
+                token_bytes_slice.len(),
+                total_units_for_item,
+                unit_size_bytes
+            );
             None
         }
     }
@@ -110,12 +120,33 @@ where
     TokenUnit: Pod + Zeroable + Copy + Clone + Debug + serde::Serialize + Send + Sync + 'static,
 {
     pub fn new(endpoint_config: &DataEndpoint) -> Self {
-        let (base_path_str, filename, _expected_num_threads, expected_token_unit_type, expected_token_unit_len, expected_is_legacy_format) = 
-            if let DataEndpoint::Mmap { base_path, filename, num_threads, token_unit_type, token_unit_len, is_legacy_rwkv_format } = endpoint_config {
-                (base_path.clone(), filename.clone(), *num_threads, *token_unit_type, *token_unit_len, *is_legacy_rwkv_format)
-            } else {
-                panic!("[MmapReader::new] Incorrect DataEndpoint variant. Expected Mmap.");
-            };
+        let (
+            base_path_str,
+            filename,
+            _expected_num_threads,
+            expected_token_unit_type,
+            expected_token_unit_len,
+            expected_is_legacy_format,
+        ) = if let DataEndpoint::Mmap {
+            base_path,
+            filename,
+            num_threads,
+            token_unit_type,
+            token_unit_len,
+            is_legacy_rwkv_format,
+        } = endpoint_config
+        {
+            (
+                base_path.clone(),
+                filename.clone(),
+                *num_threads,
+                *token_unit_type,
+                *token_unit_len,
+                *is_legacy_rwkv_format,
+            )
+        } else {
+            panic!("[MmapReader::new] Incorrect DataEndpoint variant. Expected Mmap.");
+        };
 
         let base_path = PathBuf::from(base_path_str);
         let bin_file_path = base_path.join(format!("{}.bin", filename));
@@ -126,72 +157,117 @@ where
             idx_file_path.display()
         ));
 
-        idx_file_handle.seek(SeekFrom::Start(0)).expect("Failed to seek in index file");
+        idx_file_handle
+            .seek(SeekFrom::Start(0))
+            .expect("Failed to seek in index file");
 
         let mut read_magic = [0u8; 9];
-        idx_file_handle.read_exact(&mut read_magic).expect("Failed to read magic header");
+        idx_file_handle
+            .read_exact(&mut read_magic)
+            .expect("Failed to read magic header");
 
         let mut read_version_buf = [0u8; 8];
-        idx_file_handle.read_exact(&mut read_version_buf).expect("Failed to read version");
+        idx_file_handle
+            .read_exact(&mut read_version_buf)
+            .expect("Failed to read version");
 
         let file_is_legacy_format: bool;
         let file_token_unit_type: MmapTokenUnitType;
         let file_token_unit_len: usize;
 
-        if read_magic == LEGACY_MMAP_BINIDX_MAGIC_HDR && read_version_buf == LEGACY_MMAP_BINIDX_VERSION {
+        if read_magic == LEGACY_MMAP_BINIDX_MAGIC_HDR
+            && read_version_buf == LEGACY_MMAP_BINIDX_VERSION
+        {
             file_is_legacy_format = true;
             file_token_unit_type = MmapTokenUnitType::U16;
             file_token_unit_len = 1;
             let mut legacy_dtype_buf = [0u8; 1];
-            idx_file_handle.read_exact(&mut legacy_dtype_buf).expect("Failed to read legacy DTYPE");
-            assert_eq!(legacy_dtype_buf[0], LEGACY_MMAP_BINIDX_DTYPE_U16, "Legacy .idx DTYPE mismatch");
-        } else if read_magic == GENERIC_MMAP_MAGIC_HDR && read_version_buf == GENERIC_MMAP_VERSION_V2 {
+            idx_file_handle
+                .read_exact(&mut legacy_dtype_buf)
+                .expect("Failed to read legacy DTYPE");
+            assert_eq!(
+                legacy_dtype_buf[0], LEGACY_MMAP_BINIDX_DTYPE_U16,
+                "Legacy .idx DTYPE mismatch"
+            );
+        } else if read_magic == GENERIC_MMAP_MAGIC_HDR
+            && read_version_buf == GENERIC_MMAP_VERSION_V2
+        {
             file_is_legacy_format = false;
             let mut dtype_buf = [0u8; 1];
-            idx_file_handle.read_exact(&mut dtype_buf).expect("Failed to read generic DTYPE");
+            idx_file_handle
+                .read_exact(&mut dtype_buf)
+                .expect("Failed to read generic DTYPE");
             file_token_unit_type = match dtype_buf[0] {
                 1 => MmapTokenUnitType::U16,
                 2 => MmapTokenUnitType::F32,
                 _ => panic!("Unsupported DTYPE {} in generic .idx file", dtype_buf[0]),
             };
             let mut unit_len_buf = [0u8; 4];
-            idx_file_handle.read_exact(&mut unit_len_buf).expect("Failed to read generic TOKEN_UNIT_LEN");
+            idx_file_handle
+                .read_exact(&mut unit_len_buf)
+                .expect("Failed to read generic TOKEN_UNIT_LEN");
             file_token_unit_len = u32::from_le_bytes(unit_len_buf) as usize;
             if file_token_unit_len == 0 {
                 panic!("TOKEN_UNIT_LEN in .idx file cannot be zero.");
             }
         } else {
-            panic!("Unknown .idx file format (magic or version mismatch). Magic: {:?}, Version: {:?}", read_magic, read_version_buf);
+            panic!(
+                "Unknown .idx file format (magic or version mismatch). Magic: {:?}, Version: {:?}",
+                read_magic, read_version_buf
+            );
         }
 
-        assert_eq!(file_is_legacy_format, expected_is_legacy_format, 
-            "Mismatch in legacy format flag: file says {} but config expects {}. File: {}", 
-            file_is_legacy_format, expected_is_legacy_format, idx_file_path.display());
-        assert_eq!(file_token_unit_type, expected_token_unit_type, 
-            "Mismatch in token unit type: file has {:?} but config expects {:?}. File: {}", 
-            file_token_unit_type, expected_token_unit_type, idx_file_path.display());
-        assert_eq!(file_token_unit_len, expected_token_unit_len, 
-            "Mismatch in token unit length: file has {} but config expects {}. File: {}", 
-            file_token_unit_len, expected_token_unit_len, idx_file_path.display());
+        assert_eq!(
+            file_is_legacy_format,
+            expected_is_legacy_format,
+            "Mismatch in legacy format flag: file says {} but config expects {}. File: {}",
+            file_is_legacy_format,
+            expected_is_legacy_format,
+            idx_file_path.display()
+        );
+        assert_eq!(
+            file_token_unit_type,
+            expected_token_unit_type,
+            "Mismatch in token unit type: file has {:?} but config expects {:?}. File: {}",
+            file_token_unit_type,
+            expected_token_unit_type,
+            idx_file_path.display()
+        );
+        assert_eq!(
+            file_token_unit_len,
+            expected_token_unit_len,
+            "Mismatch in token unit length: file has {} but config expects {}. File: {}",
+            file_token_unit_len,
+            expected_token_unit_len,
+            idx_file_path.display()
+        );
 
         let mut num_items_buf = [0u8; 8];
-        idx_file_handle.read_exact(&mut num_items_buf).expect("Failed to read num_items");
+        idx_file_handle
+            .read_exact(&mut num_items_buf)
+            .expect("Failed to read num_items");
         let num_logical_items = u64::from_le_bytes(num_items_buf) as usize;
 
         let mut doc_indices_len_buf = [0u8; 8];
-        idx_file_handle.read_exact(&mut doc_indices_len_buf).expect("Failed to read doc_indices_len");
+        idx_file_handle
+            .read_exact(&mut doc_indices_len_buf)
+            .expect("Failed to read doc_indices_len");
 
         let mut item_logical_token_counts_vec = Vec::with_capacity(num_logical_items);
         for _ in 0..num_logical_items {
             let mut buf = [0u8; 4];
-            idx_file_handle.read_exact(&mut buf).expect("Failed to read item logical token count");
+            idx_file_handle
+                .read_exact(&mut buf)
+                .expect("Failed to read item logical token count");
             item_logical_token_counts_vec.push(u32::from_le_bytes(buf));
         }
 
         let mut item_byte_offsets_vec = Vec::with_capacity(num_logical_items);
         for _ in 0..num_logical_items {
             let mut buf = [0u8; 8];
-            idx_file_handle.read_exact(&mut buf).expect("Failed to read item byte offset");
+            idx_file_handle
+                .read_exact(&mut buf)
+                .expect("Failed to read item byte offset");
             item_byte_offsets_vec.push(u64::from_le_bytes(buf));
         }
 
@@ -200,7 +276,9 @@ where
             bin_file_path.display()
         ));
         let bin_mmap_instance = unsafe {
-            MmapOptions::new().map(&bin_file_handle).expect("Failed to mmap binary file")
+            MmapOptions::new()
+                .map(&bin_file_handle)
+                .expect("Failed to mmap binary file")
         };
 
         let item_cache = Cache::builder()
@@ -256,15 +334,23 @@ where
         let item_cache_clone = self.item_cache.clone();
         let num_logical_items_clone = self.num_logical_items;
         let token_unit_len_clone = self.token_unit_len;
-        let reader_name = format!("[MmapReader Format: {}, Unit: {:?}, UnitLen: {}]", 
-            if self.is_legacy_format_file {"Legacy"} else {"Generic"}, self.token_unit_type, self.token_unit_len);
+        let reader_name = format!(
+            "[MmapReader Format: {}, Unit: {:?}, UnitLen: {}]",
+            if self.is_legacy_format_file {
+                "Legacy"
+            } else {
+                "Generic"
+            },
+            self.token_unit_type,
+            self.token_unit_len
+        );
 
         tokio::spawn(async move {
             mp.println(format!(
                 "{} Opened dataset. Total logical items: {}",
-                reader_name,
-                num_logical_items_clone
-            )).unwrap_or_default();
+                reader_name, num_logical_items_clone
+            ))
+            .unwrap_or_default();
 
             let pb = mp.add(ProgressBar::new(num_logical_items_clone as u64));
             pb.set_style(
@@ -278,7 +364,10 @@ where
 
             for i in 0..num_logical_items_clone {
                 if tx.is_closed() {
-                    pb.println(format!("{} Channel closed by receiver, stopping reading.", reader_name));
+                    pb.println(format!(
+                        "{} Channel closed by receiver, stopping reading.",
+                        reader_name
+                    ));
                     break;
                 }
 
@@ -298,7 +387,10 @@ where
                         let input_item = InputItem::String(json_string);
                         let final_item = parser(input_item);
                         if tx.send(final_item).await.is_err() {
-                            pb.println(format!("{} Failed to send item to channel, receiver likely dropped.", reader_name));
+                            pb.println(format!(
+                                "{} Failed to send item to channel, receiver likely dropped.",
+                                reader_name
+                            ));
                             break;
                         }
                         pb.inc(1);

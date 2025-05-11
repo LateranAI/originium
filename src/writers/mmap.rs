@@ -1,3 +1,6 @@
+use crate::custom_tasks::DataEndpoint;
+use crate::errors::FrameworkError;
+use crate::utils::common_type::{MmapItem, MmapTokenUnitType};
 use crate::writers::Writer;
 use async_trait::async_trait;
 use bytemuck::{self, Pod, Zeroable};
@@ -9,16 +12,13 @@ use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver as StdReceiver, Sender as StdSender};
 use std::thread;
 use std::time::Instant;
 use tokio::sync::mpsc::Receiver as TokioReceiver;
-use tokio::sync::mpsc::{channel, Sender as TokioSender};
+use tokio::sync::mpsc::{Sender as TokioSender, channel};
 use tokio::task::JoinHandle;
-use std::sync::Arc;
-use crate::errors::FrameworkError;
-use crate::utils::common_type::{MmapItem, MmapTokenUnitType};
-use crate::custom_tasks::DataEndpoint;
 
 const LEGACY_MMAP_BINIDX_MAGIC_HDR: &[u8] = b"MMIDIDX\x00\x00";
 const LEGACY_MMAP_BINIDX_VERSION: [u8; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
@@ -65,15 +65,26 @@ where
         } = endpoint_config
         {
             if *num_threads == 0 {
-                panic!("[MmapWriter::new] num_threads cannot be zero. This is a critical configuration error.");
+                panic!(
+                    "[MmapWriter::new] num_threads cannot be zero. This is a critical configuration error."
+                );
             }
             if *token_unit_len == 0 {
-                panic!("[MmapWriter::new] token_unit_len cannot be zero. This is a critical configuration error.");
+                panic!(
+                    "[MmapWriter::new] token_unit_len cannot be zero. This is a critical configuration error."
+                );
             }
 
             if *is_legacy_rwkv_format {
-                assert_eq!(*token_unit_type, MmapTokenUnitType::U16, "Legacy RWKV format must use U16 tokens.");
-                assert_eq!(*token_unit_len, 1, "Legacy RWKV format must have token_unit_len of 1.");
+                assert_eq!(
+                    *token_unit_type,
+                    MmapTokenUnitType::U16,
+                    "Legacy RWKV format must use U16 tokens."
+                );
+                assert_eq!(
+                    *token_unit_len, 1,
+                    "Legacy RWKV format must have token_unit_len of 1."
+                );
             }
 
             fs::create_dir_all(base_path)
@@ -89,7 +100,9 @@ where
                 _phantom_data: PhantomData,
             }
         } else {
-            panic!("[MmapWriter::new] Incorrect DataEndpoint variant provided. Expected DataEndpoint::Mmap.");
+            panic!(
+                "[MmapWriter::new] Incorrect DataEndpoint variant provided. Expected DataEndpoint::Mmap."
+            );
         }
     }
 }
@@ -116,8 +129,14 @@ where
         )).unwrap_or_default();
         let overall_start_time = Instant::now();
 
-        let (coordinator_input_tx, mut coordinator_input_rx): (TokioSender<Option<MmapItem<TokenUnit>>>, TokioReceiver<Option<MmapItem<TokenUnit>>>) = channel(self.num_processing_workers * 2);
-        let (worker_result_tx, worker_result_rx): (StdSender<TempBinWorkerResult>, StdReceiver<TempBinWorkerResult>) = mpsc::channel();
+        let (coordinator_input_tx, mut coordinator_input_rx): (
+            TokioSender<Option<MmapItem<TokenUnit>>>,
+            TokioReceiver<Option<MmapItem<TokenUnit>>>,
+        ) = channel(self.num_processing_workers * 2);
+        let (worker_result_tx, worker_result_rx): (
+            StdSender<TempBinWorkerResult>,
+            StdReceiver<TempBinWorkerResult>,
+        ) = mpsc::channel();
 
         let num_workers_for_coord = self.num_processing_workers;
         let filename_for_coord = self.output_filename.clone();
@@ -127,7 +146,8 @@ where
         let mp_for_coord = Arc::clone(&mp);
 
         let coordinator_handle = thread::spawn(move || -> Result<u64, String> {
-            let rt = tokio::runtime::Runtime::new().map_err(|e| format!("[Coordinator] Failed to create Tokio runtime: {}", e))?;
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("[Coordinator] Failed to create Tokio runtime: {}", e))?;
             let mut items_distributed_by_coordinator: u64 = 0;
 
             rt.block_on(async {
@@ -223,7 +243,9 @@ where
             while let Some(item_t_from_caller) = incoming_item_rx.recv().await {
                 let mmap_item: MmapItem<TokenUnit> = item_t_from_caller.into();
                 if coordinator_input_tx.send(Some(mmap_item)).await.is_err() {
-                    eprintln!("[MmapWriter] Failed to send item to coordinator. Coordinator likely terminated.");
+                    eprintln!(
+                        "[MmapWriter] Failed to send item to coordinator. Coordinator likely terminated."
+                    );
                     break;
                 }
             }
@@ -232,37 +254,71 @@ where
             }
         });
 
-        forward_to_coord_handle.await.expect("[MmapWriter] Item forwarding task to coordinator panicked");
-        mp.println("[MmapWriter] Item forwarding to coordinator complete.".to_string()).unwrap_or_default();
-        
+        forward_to_coord_handle
+            .await
+            .expect("[MmapWriter] Item forwarding task to coordinator panicked");
+        mp.println("[MmapWriter] Item forwarding to coordinator complete.".to_string())
+            .unwrap_or_default();
+
         let approx_items_via_coord = match coordinator_handle.join() {
             Ok(Ok(count)) => {
                 mp.println(format!("[MmapWriter] Coordinator thread finished successfully. Approx items distributed: {}", count)).unwrap_or_default();
                 count
             }
-            Ok(Err(e)) => return Err(Box::new(FrameworkError::InternalError(format!("[MmapWriter] Coordinator thread failed: {}", e)))),
-            Err(panic_err) => return Err(Box::new(FrameworkError::InternalError(format!("[MmapWriter] Coordinator thread panicked: {:?}", panic_err)))),
+            Ok(Err(e)) => {
+                return Err(Box::new(FrameworkError::InternalError(format!(
+                    "[MmapWriter] Coordinator thread failed: {}",
+                    e
+                ))));
+            }
+            Err(panic_err) => {
+                return Err(Box::new(FrameworkError::InternalError(format!(
+                    "[MmapWriter] Coordinator thread panicked: {:?}",
+                    panic_err
+                ))));
+            }
         };
 
         let collected_worker_results: Vec<TempBinWorkerResult> = worker_result_rx.iter().collect();
-        mp.println(format!("[MmapWriter] Collected {} worker results.", collected_worker_results.len())).unwrap_or_default();
+        mp.println(format!(
+            "[MmapWriter] Collected {} worker results.",
+            collected_worker_results.len()
+        ))
+        .unwrap_or_default();
 
-        if collected_worker_results.is_empty() && approx_items_via_coord > 0 && self.num_processing_workers > 0 {
+        if collected_worker_results.is_empty()
+            && approx_items_via_coord > 0
+            && self.num_processing_workers > 0
+        {
             mp.println(format!(
                 "[MmapWriter] Warning: No worker results collected, but {} items were proxied by coordinator for {} workers. Check worker logic.", 
                 approx_items_via_coord, self.num_processing_workers
             )).unwrap_or_default();
         }
-        
+
         let mut final_worker_results = collected_worker_results;
         final_worker_results.sort_by_key(|r| r.worker_id);
 
-        let total_docs_from_workers: usize = final_worker_results.iter().map(|r| r.logical_item_counts.len()).sum();
-        let total_tokens_from_workers: u64 = final_worker_results.iter().map(|r| r.total_units_processed_by_worker).sum();
+        let total_docs_from_workers: usize = final_worker_results
+            .iter()
+            .map(|r| r.logical_item_counts.len())
+            .sum();
+        let total_tokens_from_workers: u64 = final_worker_results
+            .iter()
+            .map(|r| r.total_units_processed_by_worker)
+            .sum();
 
-        let (final_bin_file_path, total_bytes_in_final_bin) = self.merge_temp_bin_files(&final_worker_results, Arc::clone(&mp));
-        let all_item_token_counts: Vec<u64> = final_worker_results.iter().flat_map(|r| r.logical_item_counts.iter().map(|&count| count as u64)).collect();
-        self.write_final_idx_file(&final_bin_file_path, &all_item_token_counts, Arc::clone(&mp));
+        let (final_bin_file_path, total_bytes_in_final_bin) =
+            self.merge_temp_bin_files(&final_worker_results, Arc::clone(&mp));
+        let all_item_token_counts: Vec<u64> = final_worker_results
+            .iter()
+            .flat_map(|r| r.logical_item_counts.iter().map(|&count| count as u64))
+            .collect();
+        self.write_final_idx_file(
+            &final_bin_file_path,
+            &all_item_token_counts,
+            Arc::clone(&mp),
+        );
         self.cleanup_temp_bin_files(&final_worker_results, Arc::clone(&mp));
 
         mp.println(format!(
@@ -288,15 +344,31 @@ where
         worker_results: &[TempBinWorkerResult],
         mp: Arc<MultiProgress>,
     ) -> (PathBuf, u64) {
-        let final_bin_file_path = self.output_base_path.join(format!("{}.bin", self.output_filename));
-        let mut final_bin_file_writer = BufWriter::new(
-            File::create(&final_bin_file_path)
-                .unwrap_or_else(|e| panic!("[MmapWriter] Failed to create final .bin file '{}': {}", final_bin_file_path.display(), e))
-        );
+        let final_bin_file_path = self
+            .output_base_path
+            .join(format!("{}.bin", self.output_filename));
+        let mut final_bin_file_writer =
+            BufWriter::new(File::create(&final_bin_file_path).unwrap_or_else(|e| {
+                panic!(
+                    "[MmapWriter] Failed to create final .bin file '{}': {}",
+                    final_bin_file_path.display(),
+                    e
+                )
+            }));
         let mut total_bytes_written_to_final_bin: u64 = 0;
 
-        mp.println(format!("[MmapWriter] Merging {} temporary .bin files into {}", worker_results.len(), final_bin_file_path.display())).unwrap_or_default();
-        let merge_pb = mp.add(ProgressBar::new(worker_results.iter().map(|r| r.bytes_written_to_temp_bin).sum()));
+        mp.println(format!(
+            "[MmapWriter] Merging {} temporary .bin files into {}",
+            worker_results.len(),
+            final_bin_file_path.display()
+        ))
+        .unwrap_or_default();
+        let merge_pb = mp.add(ProgressBar::new(
+            worker_results
+                .iter()
+                .map(|r| r.bytes_written_to_temp_bin)
+                .sum(),
+        ));
         merge_pb.set_style(
             ProgressStyle::with_template(
                 "[{elapsed_precise}] Merging temp bins [{bar:40.green/blue}] {bytes}/{total_bytes} ({eta})"
@@ -304,16 +376,22 @@ where
         );
 
         for result in worker_results {
-            let mut temp_file_reader = BufReader::new(
-                File::open(&result.temp_bin_file_path)
-                    .unwrap_or_else(|e| panic!("[MmapWriter] Failed to open temporary .bin file '{}' for merging: {}", result.temp_bin_file_path.display(), e))
-            );
+            let mut temp_file_reader =
+                BufReader::new(File::open(&result.temp_bin_file_path).unwrap_or_else(|e| {
+                    panic!(
+                        "[MmapWriter] Failed to open temporary .bin file '{}' for merging: {}",
+                        result.temp_bin_file_path.display(),
+                        e
+                    )
+                }));
             let bytes_copied = std::io::copy(&mut temp_file_reader, &mut final_bin_file_writer)
                 .unwrap_or_else(|e| panic!("[MmapWriter] Failed to copy data from temp file '{}' to final .bin file '{}': {}", result.temp_bin_file_path.display(), final_bin_file_path.display(), e));
             total_bytes_written_to_final_bin += bytes_copied;
             merge_pb.inc(bytes_copied);
         }
-        final_bin_file_writer.flush().expect("[MmapWriter] Failed to flush final .bin file writer");
+        final_bin_file_writer
+            .flush()
+            .expect("[MmapWriter] Failed to flush final .bin file writer");
         merge_pb.finish_with_message("Merging temporary .bin files complete.");
         (final_bin_file_path, total_bytes_written_to_final_bin)
     }
@@ -325,44 +403,74 @@ where
         mp: Arc<MultiProgress>,
     ) {
         let final_idx_path = final_bin_path.with_extension("idx");
-        mp.println(format!("[MmapWriter] Writing final .idx file to {}", final_idx_path.display())).unwrap_or_default();
-        let mut idx_file_writer = BufWriter::new(
-            File::create(&final_idx_path)
-                .unwrap_or_else(|e| panic!("[MmapWriter] Failed to create final .idx file '{}': {}", final_idx_path.display(), e))
-        );
+        mp.println(format!(
+            "[MmapWriter] Writing final .idx file to {}",
+            final_idx_path.display()
+        ))
+        .unwrap_or_default();
+        let mut idx_file_writer =
+            BufWriter::new(File::create(&final_idx_path).unwrap_or_else(|e| {
+                panic!(
+                    "[MmapWriter] Failed to create final .idx file '{}': {}",
+                    final_idx_path.display(),
+                    e
+                )
+            }));
 
         if self.is_legacy_rwkv_format {
-            idx_file_writer.write_all(LEGACY_MMAP_BINIDX_MAGIC_HDR).expect("Failed to write legacy magic header");
-            idx_file_writer.write_all(&LEGACY_MMAP_BINIDX_VERSION).expect("Failed to write legacy version");
-            idx_file_writer.write_all(&[LEGACY_MMAP_BINIDX_DTYPE_U16]).expect("Failed to write legacy dtype");
+            idx_file_writer
+                .write_all(LEGACY_MMAP_BINIDX_MAGIC_HDR)
+                .expect("Failed to write legacy magic header");
+            idx_file_writer
+                .write_all(&LEGACY_MMAP_BINIDX_VERSION)
+                .expect("Failed to write legacy version");
+            idx_file_writer
+                .write_all(&[LEGACY_MMAP_BINIDX_DTYPE_U16])
+                .expect("Failed to write legacy dtype");
         } else {
-            idx_file_writer.write_all(GENERIC_MMAP_MAGIC_HDR).expect("Failed to write generic magic header");
-            idx_file_writer.write_all(&GENERIC_MMAP_VERSION).expect("Failed to write generic version");
-            idx_file_writer.write_all(&(self.token_unit_type as u8).to_le_bytes()).expect("Failed to write token_unit_type");
-            idx_file_writer.write_all(&(self.token_unit_len as u32).to_le_bytes()).expect("Failed to write token_unit_len");
+            idx_file_writer
+                .write_all(GENERIC_MMAP_MAGIC_HDR)
+                .expect("Failed to write generic magic header");
+            idx_file_writer
+                .write_all(&GENERIC_MMAP_VERSION)
+                .expect("Failed to write generic version");
+            idx_file_writer
+                .write_all(&(self.token_unit_type as u8).to_le_bytes())
+                .expect("Failed to write token_unit_type");
+            idx_file_writer
+                .write_all(&(self.token_unit_len as u32).to_le_bytes())
+                .expect("Failed to write token_unit_len");
         }
 
         let num_items = all_item_token_counts.len() as u64;
-        idx_file_writer.write_all(&num_items.to_le_bytes()).expect("Failed to write num_items");
+        idx_file_writer
+            .write_all(&num_items.to_le_bytes())
+            .expect("Failed to write num_items");
 
         let doc_indices_len = num_items + 1;
-        idx_file_writer.write_all(&doc_indices_len.to_le_bytes()).expect("Failed to write doc_indices_len");
+        idx_file_writer
+            .write_all(&doc_indices_len.to_le_bytes())
+            .expect("Failed to write doc_indices_len");
 
         for &token_count_u64 in all_item_token_counts {
             if token_count_u64 > u32::MAX as u64 {
                 panic!(
-                    "[MmapWriter] Token count {} for an item exceeds u32::MAX limit ({}). Cannot write to .idx file.", 
+                    "[MmapWriter] Token count {} for an item exceeds u32::MAX limit ({}). Cannot write to .idx file.",
                     token_count_u64,
                     u32::MAX
                 );
             }
             let token_count_u32 = token_count_u64 as u32;
-            idx_file_writer.write_all(&token_count_u32.to_le_bytes()).expect("Failed to write token_count_u32");
+            idx_file_writer
+                .write_all(&token_count_u32.to_le_bytes())
+                .expect("Failed to write token_count_u32");
         }
 
         let mut current_byte_offset: u64 = 0;
         for &token_count_u64 in all_item_token_counts {
-            idx_file_writer.write_all(&current_byte_offset.to_le_bytes()).expect("Failed to write current_byte_offset");
+            idx_file_writer
+                .write_all(&current_byte_offset.to_le_bytes())
+                .expect("Failed to write current_byte_offset");
             let item_size_in_bytes = token_count_u64.checked_mul(std::mem::size_of::<u16>() as u64)
                 .unwrap_or_else(|| panic!("[MmapWriter] Overflow calculating byte size for token count {} during .idx writing. This indicates an extreme item size.", token_count_u64));
             current_byte_offset = current_byte_offset.checked_add(item_size_in_bytes)
@@ -370,20 +478,47 @@ where
         }
 
         for i in 0..=num_items {
-            idx_file_writer.write_all(&(i as u64).to_le_bytes()).expect("Failed to write document item index");
+            idx_file_writer
+                .write_all(&(i as u64).to_le_bytes())
+                .expect("Failed to write document item index");
         }
 
-        idx_file_writer.flush().expect("[MmapWriter] Failed to flush .idx file writer");
-        mp.println(format!("[MmapWriter] Finished writing .idx file (Format: {}).", if self.is_legacy_rwkv_format {"Legacy RWKV"} else {"Generic"})).unwrap_or_default();
+        idx_file_writer
+            .flush()
+            .expect("[MmapWriter] Failed to flush .idx file writer");
+        mp.println(format!(
+            "[MmapWriter] Finished writing .idx file (Format: {}).",
+            if self.is_legacy_rwkv_format {
+                "Legacy RWKV"
+            } else {
+                "Generic"
+            }
+        ))
+        .unwrap_or_default();
     }
 
-    fn cleanup_temp_bin_files(&self, worker_results: &[TempBinWorkerResult], mp: Arc<MultiProgress>) {
-        mp.println(format!("[MmapWriter] Cleaning up {} temporary .bin files...", worker_results.len())).unwrap_or_default();
+    fn cleanup_temp_bin_files(
+        &self,
+        worker_results: &[TempBinWorkerResult],
+        mp: Arc<MultiProgress>,
+    ) {
+        mp.println(format!(
+            "[MmapWriter] Cleaning up {} temporary .bin files...",
+            worker_results.len()
+        ))
+        .unwrap_or_default();
         for result in worker_results {
             if let Err(e) = fs::remove_file(&result.temp_bin_file_path) {
-                eprintln!("[MmapWriter] Failed to remove temp file {}: {}", result.temp_bin_file_path.display(), e);
+                eprintln!(
+                    "[MmapWriter] Failed to remove temp file {}: {}",
+                    result.temp_bin_file_path.display(),
+                    e
+                );
             }
         }
-        mp.println(format!("[MmapWriter] Temporary .bin files cleanup complete.")).unwrap_or_default();
+        mp.println(format!(
+            "[MmapWriter] Temporary .bin files cleanup complete."
+        ))
+        .unwrap_or_default();
     }
 }

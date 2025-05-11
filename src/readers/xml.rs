@@ -1,6 +1,7 @@
 use crate::custom_tasks::InputItem;
 use crate::readers::Reader;
 use async_trait::async_trait;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use quick_xml::events::Event;
 use quick_xml::reader::Reader as XmlQuickReader;
 use serde::de::DeserializeOwned;
@@ -9,7 +10,6 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 pub struct XmlReader {
     path: String,
@@ -31,9 +31,6 @@ impl<Item> Reader<Item> for XmlReader
 where
     Item: DeserializeOwned + Send + Sync + 'static + Debug,
 {
-
-
-
     async fn pipeline(
         &self,
         read_fn: Box<dyn Fn(InputItem) -> Item + Send + Sync + 'static>,
@@ -44,17 +41,15 @@ where
         let record_tag_bytes = self.record_tag.as_bytes().to_vec();
         let parser = Arc::new(read_fn);
 
-
-        let file_size = std::fs::metadata(&file_path_str).map(|m| m.len()).unwrap_or(0);
+        let file_size = std::fs::metadata(&file_path_str)
+            .map(|m| m.len())
+            .unwrap_or(0);
         let pb_process = mp.add(ProgressBar::new(file_size));
         pb_process.set_style(
             ProgressStyle::with_template(
                 "[{elapsed_precise}] [Processing XML {bar:40.blue/white}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
             ).unwrap()
         );
-
-
-
 
         tokio::task::spawn_blocking(move || {
             let file = match File::open(&file_path_str) {
@@ -89,85 +84,80 @@ where
                                 depth = 1;
                                 record_buf.clear();
 
-
-
                                 record_buf.extend_from_slice(b"<");
                                 record_buf.extend_from_slice(e.name().as_ref());
-                                record_buf.extend_from_slice(b">" );
+                                record_buf.extend_from_slice(b">");
                             } else {
-
                                 depth += 1;
                                 if is_in_record {
-
                                     record_buf.extend_from_slice(b"<");
                                     record_buf.extend_from_slice(e.name().as_ref());
-                                    record_buf.extend_from_slice(b">" );
+                                    record_buf.extend_from_slice(b">");
                                 }
                             }
                         } else if is_in_record {
-
                             depth += 1;
-                             record_buf.extend_from_slice(b"<");
-                             record_buf.extend_from_slice(e.name().as_ref());
-                             record_buf.extend_from_slice(b">" );
+                            record_buf.extend_from_slice(b"<");
+                            record_buf.extend_from_slice(e.name().as_ref());
+                            record_buf.extend_from_slice(b">");
                         }
                     }
                     Ok(Event::End(ref e)) => {
-                         if is_in_record {
-
+                        if is_in_record {
                             record_buf.extend_from_slice(b"</");
                             record_buf.extend_from_slice(e.name().as_ref());
                             record_buf.extend_from_slice(b">");
 
                             depth -= 1;
                             if depth == 0 && e.name().as_ref() == &record_tag_bytes {
-
                                 is_in_record = false;
                                 let record_xml_string = String::from_utf8(record_buf.clone());
 
                                 match record_xml_string {
                                     Ok(xml_str) => {
-
                                         let item = parser(InputItem::String(xml_str));
 
                                         let send_result = tx.blocking_send(item);
                                         if send_result.is_err() {
-                                            eprintln!("[XmlReader] Receiver dropped. Stopping XML processing.");
+                                            eprintln!(
+                                                "[XmlReader] Receiver dropped. Stopping XML processing."
+                                            );
                                             break;
                                         }
                                         item_count += 1;
                                     }
                                     Err(e) => {
-                                        eprintln!("[XmlReader] Failed to convert record bytes to UTF-8 string: {}", e);
-
+                                        eprintln!(
+                                            "[XmlReader] Failed to convert record bytes to UTF-8 string: {}",
+                                            e
+                                        );
                                     }
                                 }
                             }
-                         }
+                        }
                     }
                     Ok(Event::Text(e)) => {
                         if is_in_record {
-
                             record_buf.extend_from_slice(&e.into_inner());
                         }
                     }
-                    Ok(Event::CData(e)) => { 
+                    Ok(Event::CData(e)) => {
                         if is_in_record {
                             record_buf.extend_from_slice(b"<![CDATA[");
                             record_buf.extend_from_slice(&e.into_inner());
                             record_buf.extend_from_slice(b"]]>");
                         }
                     }
-                    Ok(Event::Comment(_)) | Ok(Event::Decl(_)) | Ok(Event::PI(_)) | Ok(Event::DocType(_)) => {
-
-                    }
+                    Ok(Event::Comment(_))
+                    | Ok(Event::Decl(_))
+                    | Ok(Event::PI(_))
+                    | Ok(Event::DocType(_)) => {}
                     Ok(Event::Empty(ref e)) => {
-                         if is_in_record {
-
+                        if is_in_record {
                             record_buf.extend_from_slice(b"<");
                             record_buf.extend_from_slice(e.name().as_ref());
                             record_buf.extend_from_slice(b"/>");
-                         }
+                        }
                     }
                     Ok(Event::Eof) => {
                         break;
@@ -184,9 +174,12 @@ where
                 }
                 buf.clear();
             }
-            pb_process.finish_with_message(format!("[XmlReader] Finished processing {}. Items found: {}", file_path_str, item_count));
+            pb_process.finish_with_message(format!(
+                "[XmlReader] Finished processing {}. Items found: {}",
+                file_path_str, item_count
+            ));
         });
 
         rx
     }
-} 
+}

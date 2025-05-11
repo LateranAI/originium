@@ -3,13 +3,13 @@ use crate::utils::common_type::RedisKVPair;
 use async_trait::async_trait;
 use futures::stream::{FuturesUnordered, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use redis::aio::MultiplexedConnection;
 use redis::AsyncCommands;
+use redis::aio::MultiplexedConnection;
 use std::error::Error;
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
-use std::sync::Arc;
 
 pub struct RedisWriter<T> {
     pub client: MultiplexedConnection,
@@ -39,7 +39,7 @@ where
     RedisKVPair: Send + Sync + 'static,
 {
     async fn pipeline(
-        &self, 
+        &self,
         mut rx: Receiver<T>,
         mp: Arc<MultiProgress>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {

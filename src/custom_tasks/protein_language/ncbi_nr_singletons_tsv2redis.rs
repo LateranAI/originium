@@ -1,13 +1,13 @@
 use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, LineFormat, Task, Writer};
 use crate::writers::redis::RedisWriter;
 
+use crate::TEST_MODE;
 use crate::utils::common_type::{LineInput, RedisKVPair};
 use crate::writers::debug::DebugWriter;
-use crate::TEST_MODE;
 use redis::AsyncCommands;
 use serde_json;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Clone)]
 pub struct TaskNcbiNrSingletonsTsvToRedis {
@@ -74,9 +74,7 @@ impl Task for TaskNcbiNrSingletonsTsvToRedis {
         }
     }
 
-    fn read(
-        &self,
-    ) -> Box<dyn Fn(InputItem) -> Self::ReadItem + Send + Sync + 'static> {
+    fn read(&self) -> Box<dyn Fn(InputItem) -> Self::ReadItem + Send + Sync + 'static> {
         Box::new(|input_item: InputItem| -> Self::ReadItem {
             match input_item {
                 InputItem::String(line_str) => LineInput { content: line_str },
@@ -108,9 +106,7 @@ impl Task for TaskNcbiNrSingletonsTsvToRedis {
 
         match protein_seq_result {
             Ok(Some(protein_seq)) => {
-
                 let protein_id_list = vec![protein_id_from_tsv.clone()];
-
 
                 let mut softlabel_seq = Vec::new();
                 for char_val in protein_seq.chars() {
@@ -140,9 +136,7 @@ impl Task for TaskNcbiNrSingletonsTsvToRedis {
                     value: value_as_string,
                 }))
             }
-            Ok(None) => {
-                Ok(None)
-            }
+            Ok(None) => Ok(None),
             Err(e) => {
                 eprintln!(
                     "[Task:NcbiNrSingletonsTsvToRedis] Redis GET error for protein ID '{}' (key: '{}'): {:?}. Skipping item.",

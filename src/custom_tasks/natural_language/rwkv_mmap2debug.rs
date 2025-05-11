@@ -1,7 +1,7 @@
-use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, Task, Writer}; 
-use crate::utils::common_type::{LineInput, MmapItem, MmapTokenUnitType}; // Ensure MmapItem and MmapTokenUnitType are imported
+use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, Task, Writer};
+use crate::utils::common_type::{LineInput, MmapItem, MmapTokenUnitType};
 use crate::writers::debug::DebugWriter;
-// MmapItem is used directly, no MmapBinidxItem anymore
+
 use serde_json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
@@ -23,22 +23,18 @@ impl TaskRwkvMmap2Debug {
 
 #[async_trait::async_trait]
 impl Task for TaskRwkvMmap2Debug {
-    // ReadItem is LineInput, which satisfies FromRow and DeserializeOwned.
-    // MmapReader will output InputItem::String containing JSON of Vec<u16>.
-    // Our read() fn will wrap this string into LineInput.
-    type ReadItem = LineInput; 
-    // ProcessedItem is what we actually want to debug print.
-    type ProcessedItem = MmapItem<u16>; // Changed to MmapItem<u16>
+    type ReadItem = LineInput;
+
+    type ProcessedItem = MmapItem<u16>;
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::Mmap {
-            // Paths as per TaskRwkvJsonl2Mmap's output configuration
-            base_path: "/public/home/ssjxzkz/Projects/rhineai/data/target/datasets.bin".to_string(), 
-            filename: "rwkv_data".to_string(),         
-            num_threads: 1, // Not used by reader for instantiation, but part of endpoint definition
-            token_unit_type: MmapTokenUnitType::U16,    // Added: Expect U16 tokens
-            token_unit_len: 1,                          // Added: Each logical token is 1 U16
-            is_legacy_rwkv_format: false,               // Added: Expect new format (matching writer)
+            base_path: "/public/home/ssjxzkz/Projects/rhineai/data/target/datasets.bin".to_string(),
+            filename: "rwkv_data".to_string(),
+            num_threads: 1,
+            token_unit_type: MmapTokenUnitType::U16,
+            token_unit_len: 1,
+            is_legacy_rwkv_format: false,
         }]
     }
 
@@ -48,13 +44,10 @@ impl Task for TaskRwkvMmap2Debug {
         }]
     }
 
-    // This fn converts InputItem from reader (which is InputItem::String with JSON tokens) to Self::ReadItem (LineInput)
     fn read(&self) -> Box<dyn Fn(InputItem) -> Self::ReadItem + Send + Sync + 'static> {
         Box::new(|input_item: InputItem| -> Self::ReadItem {
             match input_item {
-                InputItem::String(json_str) => {
-                    LineInput { content: json_str }
-                }
+                InputItem::String(json_str) => LineInput { content: json_str },
                 _ => panic!(
                     "TaskMmap2Debug: Expected InputItem::String from MmapReader, got {:?}",
                     input_item
@@ -63,26 +56,34 @@ impl Task for TaskRwkvMmap2Debug {
         })
     }
 
-    // This fn takes Self::ReadItem (LineInput) and converts to Option<Self::ProcessedItem> (Option<MmapBinidxItem>)
     async fn process(
         &self,
-        item: Self::ReadItem, // item is LineInput, item.content is the JSON string of Vec<u16>
+        item: Self::ReadItem,
     ) -> Result<Option<Self::ProcessedItem>, FrameworkError> {
         let current_count = self.item_counter.fetch_add(1, AtomicOrdering::Relaxed);
         if current_count < MAX_ITEMS_TO_PRINT {
-            // Deserialize the JSON string from LineInput.content into Vec<u16>
-            let tokens: Vec<u16> = serde_json::from_str(&item.content)
-                .map_err(|e| FrameworkError::TransformError {
-                    item_description: format!("LineInput content (first 100 chars): {:.100}", item.content),
-                    reason: format!("TaskMmap2Debug: Failed to deserialize Vec<u16> from JSON: {}", e)
-                })?;
-            // Construct the MmapBinidxItem (our ProcessedItem)
-            Ok(Some(MmapItem { tokens })) // Changed to MmapItem { tokens }
+            let tokens: Vec<u16> = serde_json::from_str(&item.content).map_err(|e| {
+                FrameworkError::TransformError {
+                    item_description: format!(
+                        "LineInput content (first 100 chars): {:.100}",
+                        item.content
+                    ),
+                    reason: format!(
+                        "TaskMmap2Debug: Failed to deserialize Vec<u16> from JSON: {}",
+                        e
+                    ),
+                }
+            })?;
+
+            Ok(Some(MmapItem { tokens }))
         } else {
-            if current_count == MAX_ITEMS_TO_PRINT { // Log only once when limit is reached
-                 println!("[TaskMmap2Debug] Processed {} items. Further items will be filtered out from printing.", MAX_ITEMS_TO_PRINT);
+            if current_count == MAX_ITEMS_TO_PRINT {
+                println!(
+                    "[TaskMmap2Debug] Processed {} items. Further items will be filtered out from printing.",
+                    MAX_ITEMS_TO_PRINT
+                );
             }
-            Ok(None) // Filter out subsequent items by returning None
+            Ok(None)
         }
     }
 
@@ -104,4 +105,4 @@ impl Task for TaskRwkvMmap2Debug {
             }),
         }
     }
-} 
+}

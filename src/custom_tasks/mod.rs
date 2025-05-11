@@ -7,19 +7,19 @@ use crate::utils::common_type::{FastaItem, MmapTokenUnitType};
 use serde::Deserialize;
 use std::fmt::{Debug, Display};
 
-use sqlx::any::AnyRow;
 use sqlx::FromRow;
+use sqlx::any::AnyRow;
 
 use crate::readers::Reader;
 use crate::writers::Writer;
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use futures::stream::{FuturesUnordered, StreamExt};
 use num_cpus;
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -136,18 +136,15 @@ pub trait Task: Clone + Send + Sync + 'static {
                         *max_concurrent_tasks,
                     )),
                     DataEndpoint::Mmap {
-                        token_unit_type,
-                        ..
-                    } => {
-                        match token_unit_type {
-                            MmapTokenUnitType::U16 => {
-                                Box::new(MmapReader::<Self::ReadItem, u16>::new(&input_config))
-                            }
-                            MmapTokenUnitType::F32 => {
-                                Box::new(MmapReader::<Self::ReadItem, f32>::new(&input_config))
-                            }
+                        token_unit_type, ..
+                    } => match token_unit_type {
+                        MmapTokenUnitType::U16 => {
+                            Box::new(MmapReader::<Self::ReadItem, u16>::new(&input_config))
                         }
-                    }
+                        MmapTokenUnitType::F32 => {
+                            Box::new(MmapReader::<Self::ReadItem, f32>::new(&input_config))
+                        }
+                    },
                     DataEndpoint::Debug { .. } => {
                         return Err(FrameworkError::UnsupportedEndpointType {
                             endpoint_description: format!(

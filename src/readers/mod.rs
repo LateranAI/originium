@@ -1,15 +1,15 @@
-pub mod line;
-pub mod xml;
 pub mod fasta;
-pub mod sql;
-pub mod redis;
+pub mod line;
 pub mod mmap;
+pub mod redis;
+pub mod sql;
+pub mod xml;
 
 use crate::custom_tasks::InputItem;
-use std::fmt::Debug;
-use tokio::sync::mpsc;
-use std::sync::Arc;
 use indicatif::MultiProgress;
+use std::fmt::Debug;
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 #[async_trait::async_trait]
 pub trait Reader<Item>: Send + Sync

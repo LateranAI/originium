@@ -6,9 +6,9 @@ use std::fmt::Display;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc::{self, Receiver, Sender as TokioSender};
 use tokio::task::JoinHandle;
-use std::sync::Arc;
 
 pub struct FileWriter<T: Display + Send + Sync + 'static + Debug> {
     final_path: PathBuf,
@@ -128,7 +128,8 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
                     mp.println(format!(
                         "[FileWriter] Worker {} finished, wrote {} lines to {:?}.",
                         i, lines_in_worker, temp_file_paths[i]
-                    )).unwrap_or_default();
+                    ))
+                    .unwrap_or_default();
                 }
                 Ok(Err(io_err)) => {
                     let err_msg = format!(
@@ -150,7 +151,8 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
         mp.println(format!(
             "[FileWriter] All {} worker tasks completed. Total lines written to temp files: {}.",
             self.num_concurrent_writers, total_lines_written_by_workers
-        )).unwrap_or_default();
+        ))
+        .unwrap_or_default();
 
         if item_count == 0 && total_lines_written_by_workers == 0 {
             mp.println(format!(
@@ -172,7 +174,8 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
                 "[FileWriter] Finished in {:?}. Output: {}.",
                 duration,
                 self.final_path.display()
-            )).unwrap_or_default();
+            ))
+            .unwrap_or_default();
             return Ok(());
         }
 
@@ -180,7 +183,8 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
             "[FileWriter] Merging {} temporary files into {}",
             temp_file_paths.len(),
             self.final_path.display()
-        )).unwrap_or_default();
+        ))
+        .unwrap_or_default();
         let pb_merge = mp.add(ProgressBar::new(temp_file_paths.len() as u64));
         pb_merge.set_style(
             ProgressStyle::with_template(
@@ -236,7 +240,8 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
             duration,
             self.final_path.display(),
             total_lines_written_by_workers
-        )).unwrap_or_default();
+        ))
+        .unwrap_or_default();
         Ok(())
     }
 }

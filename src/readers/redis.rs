@@ -42,7 +42,6 @@ where
         }
     }
 
-
     pub fn with_scan_count(mut self, scan_count: u64) -> Self {
         self.scan_count = scan_count;
         self
@@ -89,7 +88,11 @@ where
                     return;
                 }
             };
-            mp.println(format!("[RedisReader] Connected to Redis: {}", connection_url)).unwrap_or_default();
+            mp.println(format!(
+                "[RedisReader] Connected to Redis: {}",
+                connection_url
+            ))
+            .unwrap_or_default();
 
             let pb_process = mp.add(ProgressBar::new_spinner());
             pb_process.set_style(
@@ -180,7 +183,11 @@ where
             if !pb_process.is_finished() {
                 pb_process.finish_with_message(format!("[RedisReader] Finished scanning. Total items processed: {}. Total keys scanned: {}", items_processed, total_keys_scanned));
             }
-            mp.println(format!("[RedisReader] Disconnecting from Redis: {}", connection_url)).unwrap_or_default();
+            mp.println(format!(
+                "[RedisReader] Disconnecting from Redis: {}",
+                connection_url
+            ))
+            .unwrap_or_default();
         });
 
         rx

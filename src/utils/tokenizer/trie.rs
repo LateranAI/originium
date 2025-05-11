@@ -1,15 +1,14 @@
 #[derive(Default, Debug)]
 struct TrieNode {
     children: [[Option<Box<TrieNode>>; 16]; 16],
-    id: u16
+    id: u16,
 }
-
 
 impl TrieNode {
     fn new() -> Self {
         let mut trinode = TrieNode {
             children: Default::default(),
-            id: 0
+            id: 0,
         };
         for index in 0..256 {
             trinode.children[index >> 4][index & 15] = None;
@@ -22,7 +21,6 @@ impl TrieNode {
 pub struct Trie {
     root: TrieNode,
 }
-
 
 impl Trie {
     pub fn new() -> Self {
@@ -57,7 +55,7 @@ impl Trie {
             let ch = u8::from_be(*ch) as usize;
             let index_a = ch >> 4;
             let index_b = ch & 15;
-            if let Some(next_node) = &node.children[index_a][index_b]{
+            if let Some(next_node) = &node.children[index_a][index_b] {
                 if node.id != 0 {
                     old_node = node;
                     old_index = index;
@@ -67,16 +65,14 @@ impl Trie {
             } else {
                 if node.id == 0 {
                     return (old_index, old_node.id);
-                }
-                else {
+                } else {
                     return (index, node.id);
                 }
             }
         }
         if node.id == 0 {
             (old_index, old_node.id)
-        }
-        else {
+        } else {
             (index, node.id)
         }
     }

@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
-use sqlx::{FromRow};
-use std::fmt::{Display, Formatter};
 use bytemuck::{Pod, Zeroable};
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
 use std::fmt::Debug;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, Deserialize, FromRow)]
 pub struct LineInput {
@@ -31,7 +31,13 @@ pub struct FastaItem {
 
 impl Display for FastaItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, ">{} [length: {}]\\n{}", self.id, self.seq.len(), self.seq)
+        write!(
+            f,
+            ">{} [length: {}]\\n{}",
+            self.id,
+            self.seq.len(),
+            self.seq
+        )
     }
 }
 

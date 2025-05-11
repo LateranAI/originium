@@ -1,22 +1,20 @@
 use crate::custom_tasks::InputItem;
 use crate::readers::Reader;
 use async_trait::async_trait;
-use serde::de::DeserializeOwned;
-use std::fmt::Debug;
-use std::io::{SeekFrom, Read, Seek};
-use std::sync::Arc;
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use memchr::memchr_iter;
-use tokio::sync::mpsc;
 use num_cpus;
 use rayon::prelude::*;
-
+use serde::de::DeserializeOwned;
+use std::fmt::Debug;
+use std::io::{Read, Seek, SeekFrom};
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader as TokioBufReader};
 
 use crate::custom_tasks::LineFormat;
-
 
 const JSONL_READER_CONFIG: LineReaderConfig = LineReaderConfig {
     reader_type_name: "JsonlReader",
@@ -36,7 +34,6 @@ const PLAINTEXT_READER_CONFIG: LineReaderConfig = LineReaderConfig {
     process_progress_template: "[{elapsed_precise}] [Processing Text lines {bar:40.green/black}] {pos}/{len} ({per_sec}, {eta})",
 };
 
-
 pub struct LineReader {
     path: String,
     num_threads: usize,
@@ -46,7 +43,7 @@ pub struct LineReader {
 impl LineReader {
     pub fn new(path: String, format: LineFormat) -> Self {
         let num_threads = num_cpus::get();
-        
+
         let selected_config = match format {
             LineFormat::Jsonl => JSONL_READER_CONFIG,
             LineFormat::Tsv => TSV_READER_CONFIG,
@@ -55,9 +52,7 @@ impl LineReader {
 
         eprintln!(
             "[{}] Using {} threads for parallel reading file: {}",
-            selected_config.reader_type_name,
-            num_threads,
-            path
+            selected_config.reader_type_name, num_threads, path
         );
         Self {
             path,
@@ -325,8 +320,7 @@ where
     if file_size == 0 {
         eprintln!(
             "[{}] File size is 0 or could not be determined for {}. No lines will be processed.",
-            config.reader_type_name,
-            file_path_str
+            config.reader_type_name, file_path_str
         );
         drop(tx);
         return rx;
@@ -358,12 +352,10 @@ where
     if line_offsets.is_empty() && file_size > 0 {
         eprintln!(
             "[{}] No line offsets found for {}, though file size is {}. Check file content and newline characters.",
-            config.reader_type_name,
-            file_path_str,
-            file_size
+            config.reader_type_name, file_path_str, file_size
         );
     }
-    
+
     let total_lines = line_offsets.len();
     let pb_process = mp.add(ProgressBar::new(total_lines as u64));
     pb_process.set_style(
@@ -387,8 +379,7 @@ where
         let reader_type_name_clone = config.reader_type_name;
 
         let start_line_idx_in_offsets = i * lines_per_thread_ideal;
-        let mut end_line_idx_in_offsets =
-            ((i + 1) * lines_per_thread_ideal).min(total_lines);
+        let mut end_line_idx_in_offsets = ((i + 1) * lines_per_thread_ideal).min(total_lines);
 
         if start_line_idx_in_offsets >= end_line_idx_in_offsets {
             continue;

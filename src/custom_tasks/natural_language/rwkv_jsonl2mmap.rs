@@ -23,9 +23,7 @@ impl TaskRwkvJsonl2Mmap {
             Tokenizer::new("/public/home/ssjxzkz/Projects/originium/assets/vocab_v20230424.txt")
                 .expect("Failed to create tokenizer"),
         );
-        Self {
-            tokenizer,
-        }
+        Self { tokenizer }
     }
 }
 

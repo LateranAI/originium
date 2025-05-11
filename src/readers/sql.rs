@@ -1,14 +1,14 @@
 use crate::custom_tasks::InputItem;
 use crate::readers::Reader;
 use async_trait::async_trait;
-use sqlx::any::{AnyPoolOptions, AnyRow};
-use sqlx::{FromRow};
 use futures::stream::StreamExt;
-use std::fmt::Debug;
-use tokio::sync::mpsc;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use std::marker::{Unpin, PhantomData};
+use sqlx::FromRow;
+use sqlx::any::{AnyPoolOptions, AnyRow};
+use std::fmt::Debug;
+use std::marker::{PhantomData, Unpin};
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 pub struct SqlReader<Item> {
     connection_url: String,
@@ -25,7 +25,11 @@ where
             "[SqlReader] Initialized for URL: {}. Query: {}",
             connection_url, query
         );
-        Self { connection_url, query, _marker: PhantomData }
+        Self {
+            connection_url,
+            query,
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -40,12 +44,11 @@ where
         mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(100);
-        let pool_options = AnyPoolOptions::new()
-            .max_connections(5);
-            
+        let pool_options = AnyPoolOptions::new().max_connections(5);
+
         let query = self.query.clone();
         let url = self.connection_url.clone();
-        let tx_clone = tx.clone(); 
+        let tx_clone = tx.clone();
 
         tokio::spawn(async move {
             let pool = match pool_options.connect(&url).await {
@@ -55,7 +58,8 @@ where
                     return;
                 }
             };
-            mp.println(format!("[SqlReader] Connected to database: {}", url)).unwrap_or_default();
+            mp.println(format!("[SqlReader] Connected to database: {}", url))
+                .unwrap_or_default();
 
             let pb_process = mp.add(ProgressBar::new_spinner());
             pb_process.set_style(
@@ -63,7 +67,6 @@ where
                     .unwrap()
             );
             pb_process.enable_steady_tick(std::time::Duration::from_millis(120));
-
 
             let mut stream = sqlx::query_as::<sqlx::Any, Item>(&query).fetch(&pool);
             let mut items_processed: u64 = 0;
@@ -85,14 +88,18 @@ where
                     }
                 }
             }
-            
+
             if !pb_process.is_finished() {
-                 pb_process.finish_with_message(format!("[SqlReader] Finished fetching rows. Total rows: {}", items_processed));
+                pb_process.finish_with_message(format!(
+                    "[SqlReader] Finished fetching rows. Total rows: {}",
+                    items_processed
+                ));
             }
-            mp.println(format!("[SqlReader] Disconnecting from database: {}", url)).unwrap_or_default();
+            mp.println(format!("[SqlReader] Disconnecting from database: {}", url))
+                .unwrap_or_default();
             pool.close().await;
         });
 
         rx
     }
-} 
+}

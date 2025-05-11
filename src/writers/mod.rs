@@ -1,16 +1,16 @@
-pub mod redis;
-pub mod mmap;
 pub mod debug;
-pub mod line;
-pub mod xml;
 pub mod fasta;
+pub mod line;
+pub mod mmap;
+pub mod redis;
 pub mod sql;
+pub mod xml;
 
-use tokio::sync::mpsc::Receiver;
-use std::error::Error;
 use async_trait::async_trait;
-use std::sync::Arc;
 use indicatif::MultiProgress;
+use std::error::Error;
+use std::sync::Arc;
+use tokio::sync::mpsc::Receiver;
 
 #[async_trait]
 pub trait Writer<OutputItem: Send + 'static>: Send + Sync {
