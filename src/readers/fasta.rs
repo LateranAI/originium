@@ -4,7 +4,6 @@ use crate::utils::common_type::FastaItem;
 use async_trait::async_trait;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use needletail::{parse_fastx_file /*, Sequence*/};
-use serde_json;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;

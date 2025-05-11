@@ -42,7 +42,7 @@ where
         }
     }
 
-    #[allow(dead_code)]
+
     pub fn with_scan_count(mut self, scan_count: u64) -> Self {
         self.scan_count = scan_count;
         self

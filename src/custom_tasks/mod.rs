@@ -1,4 +1,4 @@
-mod natural_language;
+pub mod natural_language;
 pub mod protein_language;
 
 use crate::errors::FrameworkError;
@@ -130,7 +130,7 @@ pub trait Task: Clone + Send + Sync + 'static {
                         key_prefix.clone(),
                         *max_concurrent_tasks,
                     )),
-                    DataEndpoint::RwkvBinidx {
+                    DataEndpoint::Mmap {
                         base_path: _base_path,
                         filename_prefix: _filename_prefix,
                         num_threads: _num_threads,
@@ -539,7 +539,7 @@ pub enum DataEndpoint {
         key_prefix: String,
         max_concurrent_tasks: usize,
     },
-    RwkvBinidx {
+    Mmap {
         base_path: String,
         filename_prefix: String,
         num_threads: usize,
@@ -589,6 +589,19 @@ impl DataEndpoint {
             (url.clone(), key_prefix.clone(), *max_concurrent_tasks)
         } else {
             panic!("Called unwrap_redis() on non-Redis endpoint");
+        }
+    }
+
+    pub fn unwrap_mmap(&self) -> (String, String, usize) {
+        if let DataEndpoint::Mmap {
+            base_path,
+            filename_prefix,
+            num_threads,
+        } = self
+        {
+            (base_path.clone(), filename_prefix.clone(), num_threads.clone())
+        } else {
+            panic!("Called unwrap_mmap() on non-Mmap endpoint")
         }
     }
 }
