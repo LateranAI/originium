@@ -73,7 +73,7 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
         vec![DataEndpoint::Redis {
             url: "redis://:ssjxzkz@10.100.1.98:6379/1".to_string(),
             key_prefix: "softlabel:".to_string(),
-            max_concurrent_tasks: 512,
+            max_concurrent_tasks: 8192
         }]
     }
 
@@ -82,10 +82,11 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
             DataEndpoint::Mmap {
                 base_path: "/public/home/ssjxzkz/Projects/originium/data".to_string(),
                 filename: "softlabel".to_string(),
-                num_threads: num_cpus::get().max(1),
+                num_threads: 1,
                 token_unit_type: MmapTokenUnitType::F32,
                 token_unit_len: VECTOR_DIM,
                 is_legacy_rwkv_format: false,
+                context_length: Some(2048),
             },
         ]
     }

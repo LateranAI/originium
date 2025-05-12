@@ -1,10 +1,10 @@
 use crate::custom_tasks::natural_language::rwkv_jsonl2mmap::TaskRwkvJsonl2Mmap;
 use crate::custom_tasks::natural_language::rwkv_mmap2debug::TaskRwkvMmap2Debug;
-use crate::custom_tasks::protein_language::ncbi_nr_singletons_tsv2redis::TaskNcbiNrSingletonsTsvToRedis;
-
-use crate::custom_tasks::Task;
 use crate::custom_tasks::protein_language::ncbi_nr_eukaryota_fasta2redis::TaskNcbiNrEukaryotaFastaToRedis;
+use crate::custom_tasks::protein_language::ncbi_nr_singletons_tsv2redis::TaskNcbiNrSingletonsTsvToRedis;
 use crate::custom_tasks::protein_language::ncbi_nr_softlabels_jsonl2redis::TaskNcbiNrSoftlabelsJsonl2Redis;
+use crate::custom_tasks::protein_language::ncbi_nr_softlabels_redis2mmap::TaskNcbiNrSoftlabelsRedis2Mmap;
+use crate::custom_tasks::Task;
 
 mod custom_tasks;
 mod errors;
@@ -63,4 +63,13 @@ async fn main() {
         eprintln!("Task RWKV Mmap To Debug execution failed: {:?}", e);
     }
     println!("Task RWKV Mmap To Debug invocation completed.");
+
+    println!("Running Task NcbiNr Softlabels Redis To Mmap...");
+    let task_redis_to_mmap = TaskNcbiNrSoftlabelsRedis2Mmap::new();
+    if let Err(e) = task_redis_to_mmap.run().await {
+        eprintln!("Task NcbiNr Softlabels Redis To Mmap execution failed: {:?}", e);
+    } else {
+        println!("Task NcbiNr Softlabels Redis To Mmap completed.");
+    }
+    println!("Task NcbiNr Softlabels Redis To Mmap invocation attempt finished.");
 }

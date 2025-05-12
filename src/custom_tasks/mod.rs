@@ -357,6 +357,7 @@ pub trait Task: Clone + Send + Sync + 'static {
                                     }));
                                 }
                                 None => {
+                                    // Broker channel closed, no more items.
                                     break;
                                 }
                             }
@@ -565,6 +566,7 @@ pub enum DataEndpoint {
         token_unit_type: MmapTokenUnitType,
         token_unit_len: usize,
         is_legacy_rwkv_format: bool,
+        context_length: Option<usize>,
     },
 }
 
@@ -614,7 +616,7 @@ impl DataEndpoint {
         }
     }
 
-    pub fn unwrap_mmap(&self) -> (String, String, usize, MmapTokenUnitType, usize, bool) {
+    pub fn unwrap_mmap(&self) -> (String, String, usize, MmapTokenUnitType, usize, bool, Option<usize>) {
         if let DataEndpoint::Mmap {
             base_path,
             filename,
@@ -622,6 +624,7 @@ impl DataEndpoint {
             token_unit_type,
             token_unit_len,
             is_legacy_rwkv_format,
+            context_length,
         } = self
         {
             (
@@ -631,6 +634,7 @@ impl DataEndpoint {
                 *token_unit_type,
                 *token_unit_len,
                 *is_legacy_rwkv_format,
+                *context_length,
             )
         } else {
             panic!("Called unwrap_mmap() on non-Mmap endpoint")

@@ -134,6 +134,7 @@ where
             token_unit_type,
             token_unit_len,
             is_legacy_rwkv_format,
+            ..
         } = endpoint_config
         {
             (
