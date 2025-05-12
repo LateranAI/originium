@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver as StdReceiver, Sender as StdSender};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Receiver as TokioReceiver;
 use tokio::sync::mpsc::{Sender as TokioSender, channel};
 use tokio::task::JoinHandle;
@@ -129,6 +129,14 @@ where
         )).unwrap_or_default();
         let overall_start_time = Instant::now();
 
+        let processing_pb = mp.add(ProgressBar::new_spinner());
+        processing_pb.enable_steady_tick(Duration::from_millis(120));
+        processing_pb.set_style(
+            ProgressStyle::with_template(
+                "[{elapsed_precise}] [Writing to Temp Files {spinner:.blue}] {pos} items processed ({per_sec})"
+            ).unwrap()
+        );
+
         let (coordinator_input_tx, mut coordinator_input_rx): (
             TokioSender<Option<MmapItem<TokenUnit>>>,
             TokioReceiver<Option<MmapItem<TokenUnit>>>,
@@ -239,9 +247,11 @@ where
             Ok(items_distributed_by_coordinator)
         });
 
+        let pb_clone_for_forwarder = processing_pb.clone();
         let forward_to_coord_handle = tokio::spawn(async move {
             while let Some(item_t_from_caller) = incoming_item_rx.recv().await {
                 let mmap_item: MmapItem<TokenUnit> = item_t_from_caller.into();
+                pb_clone_for_forwarder.inc(1);
                 if coordinator_input_tx.send(Some(mmap_item)).await.is_err() {
                     eprintln!(
                         "[MmapWriter] Failed to send item to coordinator. Coordinator likely terminated."
@@ -252,6 +262,10 @@ where
             if coordinator_input_tx.send(None).await.is_err() {
                 eprintln!("[MmapWriter] Failed to send end signal to coordinator.");
             }
+            pb_clone_for_forwarder.finish_with_message(format!(
+                "[Writing to Temp Files] Finished processing items. Total: {}",
+                pb_clone_for_forwarder.position()
+            ));
         });
 
         forward_to_coord_handle
@@ -471,10 +485,26 @@ where
             idx_file_writer
                 .write_all(&current_byte_offset.to_le_bytes())
                 .expect("Failed to write current_byte_offset");
-            let item_size_in_bytes = token_count_u64.checked_mul(std::mem::size_of::<u16>() as u64)
-                .unwrap_or_else(|| panic!("[MmapWriter] Overflow calculating byte size for token count {} during .idx writing. This indicates an extreme item size.", token_count_u64));
+
+            let size_of_token_unit = std::mem::size_of::<TokenUnit>() as u64;
+            let item_size_in_bytes = token_count_u64
+                .checked_mul(self.token_unit_len as u64)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "[MmapWriter] Overflow calculating tokens * unit_len ({} * {}) during .idx writing.",
+                        token_count_u64, self.token_unit_len
+                    )
+                })
+                .checked_mul(size_of_token_unit)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "[MmapWriter] Overflow calculating total byte size ({} tokens * {} unit_len * {} bytes/unit) during .idx writing.",
+                        token_count_u64, self.token_unit_len, size_of_token_unit
+                    )
+                });
+
             current_byte_offset = current_byte_offset.checked_add(item_size_in_bytes)
-                 .unwrap_or_else(|| panic!("[MmapWriter] Overflow calculating total offset at token count {} during .idx writing. This indicates an extremely large dataset.", token_count_u64));
+                 .unwrap_or_else(|| panic!("[MmapWriter] Overflow calculating total offset at token count {} (adding {} bytes) during .idx writing. This indicates an extremely large dataset.", token_count_u64, item_size_in_bytes));
         }
 
         for i in 0..=num_items {
