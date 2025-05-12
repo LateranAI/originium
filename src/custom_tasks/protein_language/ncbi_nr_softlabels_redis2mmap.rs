@@ -22,44 +22,45 @@ pub struct TaskNcbiNrSoftlabelsRedis2Mmap {
 
 impl TaskNcbiNrSoftlabelsRedis2Mmap {
     pub fn new() -> Self {
-        let vocab_map: DashMap<&'static str, usize> = VOCABULARY_TO_INDEX.iter().cloned().collect();
+        let vocab_map: DashMap<&'static str, usize> = VOCABULARY.iter().cloned().collect();
         Self {
             vocab_to_index: vocab_map,
         }
     }
 }
 
-const VOCABULARY_TO_INDEX: [(&str, usize); 30] = [
-    ("A", 0),
-    ("R", 1),
-    ("N", 2),
-    ("D", 3),
-    ("C", 4),
-    ("Q", 5),
-    ("E", 6),
-    ("G", 7),
-    ("H", 8),
-    ("I", 9),
-    ("L", 10),
-    ("K", 11),
-    ("M", 12),
-    ("F", 13),
-    ("P", 14),
-    ("S", 15),
-    ("T", 16),
-    ("W", 17),
-    ("Y", 18),
-    ("V", 19),
-    ("B", 20),
-    ("Z", 21),
-    ("X", 22),
-    ("U", 23),
-    ("O", 24),
-    ("J", 25),
-    ("<end>", 26),
-    ("<pad>", 27),
-    ("<gap>", 28),
-    ("<unknown>", 29),
+const VOCABULARY: [(&str, usize); 31] = [
+    ("<eos>", 0),
+    ("<pad>", 1),
+    ("<gap>", 2),
+    ("<unk>", 3),
+    ("<msk>", 4),
+    ("A", 5),
+    ("B", 6),
+    ("C", 7),
+    ("D", 8),
+    ("E", 9),
+    ("F", 10),
+    ("G", 11),
+    ("H", 12),
+    ("I", 13),
+    ("J", 14),
+    ("K", 15),
+    ("L", 16),
+    ("M", 17),
+    ("N", 18),
+    ("O", 19),
+    ("P", 20),
+    ("Q", 21),
+    ("R", 22),
+    ("S", 23),
+    ("T", 24),
+    ("U", 25),
+    ("V", 26),
+    ("W", 27),
+    ("X", 28),
+    ("Y", 29),
+    ("Z", 30),
 ];
 
 const VECTOR_DIM: usize = 64;
@@ -86,7 +87,7 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
                 token_unit_type: MmapTokenUnitType::F32,
                 token_unit_len: VECTOR_DIM,
                 is_legacy_rwkv_format: false,
-                context_length: Some(2048),
+                context_length: Some(4096),
             },
         ]
     }
@@ -173,27 +174,30 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
                                     position_vector[index] = normalized_freq;
                                 } else {
                                     eprintln!("Error: Vocab index {} out of bounds for vector dimension {}. Label: '{}'", index, VECTOR_DIM, label);
-                                    if let Some(unknown_index_ref) = vocab_to_index.get("<unknown>") {
-                                        if *unknown_index_ref < VECTOR_DIM {
-                                            position_vector[*unknown_index_ref] += normalized_freq;
+                                    if let Some(unknown_index_ref) = vocab_to_index.get("<unk>") {
+                                        let unknown_index = *unknown_index_ref;
+                                        if unknown_index < VECTOR_DIM {
+                                            position_vector[unknown_index] += normalized_freq;
                                         } else {
-                                            eprintln!("Error: <unknown> index {} also out of bounds!", *unknown_index_ref);
+                                            eprintln!("Error: <unk> index {} also out of bounds!", unknown_index);
                                         }
+                                    } else {
+                                        eprintln!("Critical Error: <unk> token not found in vocab map!");
                                     }
                                 }
                             } else {
-                                if let Some(unknown_index_ref) = vocab_to_index.get("<unknown>") {
+                                if let Some(unknown_index_ref) = vocab_to_index.get("<unk>") {
                                     let unknown_index = *unknown_index_ref;
                                     if unknown_index < VECTOR_DIM {
                                         position_vector[unknown_index] += normalized_freq;
                                     } else {
-                                        eprintln!("Error: <unknown> index {} out of bounds!", unknown_index);
+                                        eprintln!("Error: <unk> index {} out of bounds!", unknown_index);
                                     }
                                 } else {
-                                    eprintln!("Critical Error: <unknown> token not found in vocab map during processing!");
+                                    eprintln!("Critical Error: <unk> token not found in vocab map during processing!");
                                 }
                                 eprintln!(
-                                    "Warning: Encountered unmapped label '{}', mapping to <unknown>.",
+                                    "Warning: Encountered unmapped label '{}', mapping to <unk>.",
                                     label
                                 );
                             }
@@ -213,6 +217,21 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
                     continue;
                 }
                 all_position_vectors.extend_from_slice(&position_vector);
+            }
+
+            if !all_position_vectors.is_empty() || !softlabel_array.is_empty() {
+                if let Some(eos_index_ref) = self.vocab_to_index.get("<eos>") {
+                    let eos_index = *eos_index_ref;
+                    if eos_index < VECTOR_DIM {
+                        let mut eos_vector = vec![0.0; VECTOR_DIM];
+                        eos_vector[eos_index] = 1.0;
+                        all_position_vectors.extend_from_slice(&eos_vector);
+                    } else {
+                         eprintln!("Critical Error: <eos> index {} is out of bounds for VECTOR_DIM {}! Cannot append EOS token.", eos_index, VECTOR_DIM);
+                    }
+                } else {
+                     eprintln!("Critical Error: <eos> token not found in vocab map! Cannot append EOS token.");
+                }
             }
 
             if all_position_vectors.is_empty() {

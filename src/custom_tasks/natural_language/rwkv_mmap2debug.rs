@@ -29,11 +29,11 @@ impl Task for TaskRwkvMmap2Debug {
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::Mmap {
-            base_path: "/public/home/ssjxzkz/Projects/rhineai/data/target/datasets.bin".to_string(),
-            filename: "rwkv_data".to_string(),
+            base_path: "/public/home/ssjxzkz/Projects/originium/data".to_string(),
+            filename: "softlabel".to_string(),
             num_threads: 1,
-            token_unit_type: MmapTokenUnitType::U16,
-            token_unit_len: 1,
+            token_unit_type: MmapTokenUnitType::F32,
+            token_unit_len: 64,
             is_legacy_rwkv_format: false,
             context_length: None,
         }]
