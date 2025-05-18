@@ -357,7 +357,7 @@ pub trait Task: Clone + Send + Sync + 'static {
                                     }));
                                 }
                                 None => {
-                                    // Broker channel closed, no more items.
+
                                     break;
                                 }
                             }

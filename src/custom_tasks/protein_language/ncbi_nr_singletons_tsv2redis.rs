@@ -17,7 +17,7 @@ pub struct TaskNcbiNrSingletonsTsvToRedis {
 
 impl TaskNcbiNrSingletonsTsvToRedis {
     pub async fn new() -> Result<Self, FrameworkError> {
-        // Get output Redis info (DB1 for softlabels)
+
         let outputs_info = Self::get_outputs_info();
         let output_endpoint = outputs_info.get(0).ok_or_else(|| {
             FrameworkError::ComponentBuildError {
@@ -81,7 +81,7 @@ impl TaskNcbiNrSingletonsTsvToRedis {
             output_key_prefix, initial_id_counter_val, max_id
         );
 
-        // Existing connection for sequence query (DB0)
+
         let client_db0 = redis::Client::open("redis://:ssjxzkz@10.100.1.98:6379/0").map_err(|e| {
             FrameworkError::ComponentBuildError {
                 component_type: "RedisClientForSeqQuery (DB0)".to_string(),

@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Receiver as TokioReceiver;
 use tokio::sync::mpsc::{Sender as TokioSender, channel};
 use tokio::task::JoinHandle;
-use primes; // Added for magic_prime calculation
+use primes;
 
 const LEGACY_MMAP_BINIDX_MAGIC_HDR: &[u8] = b"MMIDIDX\x00\x00";
 const LEGACY_MMAP_BINIDX_VERSION: [u8; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
@@ -135,7 +135,7 @@ where
         let overall_start_time = Instant::now();
 
         if self.num_processing_workers == 1 {
-            // --- Single-threaded Path --- 
+
             mp.println("[MmapWriter] Running in single-threaded mode (direct write).")
               .unwrap_or_default();
 
@@ -167,7 +167,7 @@ where
 
                 if mmap_item.tokens.is_empty() {
                     mp.println("[MmapWriter Single] Warning: Received empty MmapItem, skipping.").unwrap_or_default();
-                    logical_item_counts.push(0); // Still need to record a zero-length item for idx
+                    logical_item_counts.push(0);
                     continue;
                 }
                 
@@ -194,25 +194,25 @@ where
                 processing_pb.position()
             ));
 
-            self.write_final_idx_file(&final_bin_file_path, &logical_item_counts, Arc::clone(&mp))?; // Propagate error from idx writing
+            self.write_final_idx_file(&final_bin_file_path, &logical_item_counts, Arc::clone(&mp))?;
 
             mp.println(format!(
                 "[MmapWriter Single] Pipeline finished in {:?}. Items processed: {}. Token Units processed: {}. Final .bin size: {:.2} MB.",
                 overall_start_time.elapsed(),
                 items_processed_count,
-                total_units_processed, // Note: This is total TokenUnits (e.g., f32), not logical tokens
+                total_units_processed,
                 total_bytes_written as f64 / (1024.0 * 1024.0)
             )).unwrap_or_default();
 
-            // --- Calculate and print magic_prime (Single-threaded) ---
+
             let total_logical_tokens: u64 = logical_item_counts.iter().sum();
             
             let mut magic_prime: u64 = 0;
             if let Some(ctx_len) = self.context_length {
                 let context_length = ctx_len as u64;
-                if context_length > 0 && total_logical_tokens > context_length * 3 { // Check context_length > 0
+                if context_length > 0 && total_logical_tokens > context_length * 3 {
                     let n_chunk = (total_logical_tokens / context_length).saturating_sub(1);
-                    // Use saturating_sub to prevent underflow if total_logical_tokens is small
+
                     for i in (0..n_chunk).rev() {
                         if i % 3 == 2 && primes::is_prime(i) {
                             magic_prime = i;
@@ -232,12 +232,12 @@ where
             } else {
                 mp.println("[MmapWriter Single] Skipping magic_prime calculation: context_length not provided.").unwrap_or_default();
             }
-            // --- End magic_prime calculation ---
+
 
             Ok(())
 
         } else {
-            // --- Multi-threaded Path (Existing Logic) --- 
+
             let processing_pb = mp.add(ProgressBar::new_spinner());
             processing_pb.enable_steady_tick(Duration::from_millis(120));
             processing_pb.set_style(
@@ -285,13 +285,13 @@ where
                                 File::create(&temp_bin_file_path)
                                     .expect(&format!("[Worker {}] Failed to create temp bin file: {}", worker_idx, temp_bin_file_path.display()))
                             );
-                            let mut logical_item_counts_for_worker: Vec<u32> = Vec::new(); // Note: This remains u32 for idx compatibility
+                            let mut logical_item_counts_for_worker: Vec<u32> = Vec::new();
                             let mut bytes_written_by_worker: u64 = 0;
                             let mut total_units_count_for_worker: u64 = 0;
 
                             while let Some(Some(mmap_item)) = worker_task_rx.recv().await {
                                 if mmap_item.tokens.is_empty() {
-                                     // Ensure empty items are recorded for idx consistency
+
                                      logical_item_counts_for_worker.push(0);
                                      continue;
                                 }
@@ -303,7 +303,7 @@ where
                                     );
                                 }
                                 
-                                // Keep using u32 here for idx file compatibility
+
                                 let num_logical_tokens_u32 = (mmap_item.tokens.len() / current_token_unit_len) as u32; 
                                 if num_logical_tokens_u32 as usize * current_token_unit_len != mmap_item.tokens.len() {
                                      panic!("[Worker {}] Potential overflow calculating logical tokens as u32.", worker_idx);
@@ -323,7 +323,7 @@ where
                             let worker_final_result = TempBinWorkerResult {
                                 worker_id: worker_idx,
                                 temp_bin_file_path: temp_bin_file_path,
-                                logical_item_counts: logical_item_counts_for_worker, // Keep as Vec<u32>
+                                logical_item_counts: logical_item_counts_for_worker,
                                 bytes_written_to_temp_bin: bytes_written_by_worker,
                                 total_units_processed_by_worker: total_units_count_for_worker,
                             };
@@ -435,8 +435,8 @@ where
                     "[MmapWriter] Warning: No worker results collected, but {} items were proxied by coordinator for {} workers. Check worker logic.", 
                     approx_items_via_coord, self.num_processing_workers
                 )).unwrap_or_default();
-                 // If no worker results, skip merging and index writing, but maybe should error?
-                 // For now, just finish.
+
+
                  let duration = overall_start_time.elapsed();
                  mp.println(format!(
                     "[MmapWriter Multi] Pipeline finished (no worker results) in {:?}. Approx items via coord: {}. Items from workers: 0. Tokens from workers: 0.",
@@ -453,17 +453,17 @@ where
                 .iter()
                 .map(|r| r.logical_item_counts.len())
                 .sum();
-            let total_tokens_from_workers: u64 = final_worker_results // This is actually total TokenUnits (e.g., f32), not logical tokens
+            let total_tokens_from_workers: u64 = final_worker_results
                 .iter()
                 .map(|r| r.total_units_processed_by_worker)
                 .sum();
 
             let (final_bin_file_path, total_bytes_in_final_bin) = self.merge_temp_bin_files(&final_worker_results, Arc::clone(&mp))?;
             
-            // Flatten logical_item_counts (Vec<u32>) into Vec<u64> for write_final_idx_file
+
             let all_item_token_counts: Vec<u64> = final_worker_results
                 .iter()
-                .flat_map(|r| r.logical_item_counts.iter().map(|&count| count as u64)) // Convert u32 to u64
+                .flat_map(|r| r.logical_item_counts.iter().map(|&count| count as u64))
                 .collect();
 
             self.write_final_idx_file(
@@ -478,19 +478,19 @@ where
                 overall_start_time.elapsed(),
                 approx_items_via_coord,
                 total_docs_from_workers,
-                total_tokens_from_workers, // This is units, not logical tokens
+                total_tokens_from_workers,
                 total_bytes_in_final_bin as f64 / (1024.0 * 1024.0)
             )).unwrap_or_default();
 
-            // --- Calculate and print magic_prime (Multi-threaded) ---
+
             let total_logical_tokens: u64 = all_item_token_counts.iter().sum();
             
             let mut magic_prime: u64 = 0;
             if let Some(ctx_len) = self.context_length {
                 let context_length = ctx_len as u64;
-                if context_length > 0 && total_logical_tokens > context_length * 3 { // Check context_length > 0
+                if context_length > 0 && total_logical_tokens > context_length * 3 {
                      let n_chunk = (total_logical_tokens / context_length).saturating_sub(1);
-                     // Use saturating_sub to prevent underflow if total_logical_tokens is small
+
                      for i in (0..n_chunk).rev() {
                          if i % 3 == 2 && primes::is_prime(i) {
                              magic_prime = i;
@@ -510,7 +510,7 @@ where
             } else {
                 mp.println("[MmapWriter Multi] Skipping magic_prime calculation: context_length not provided.").unwrap_or_default();
             }
-            // --- End magic_prime calculation ---
+
 
             Ok(())
         }
@@ -526,7 +526,7 @@ where
         &self,
         worker_results: &[TempBinWorkerResult],
         mp: Arc<MultiProgress>,
-    ) -> Result<(PathBuf, u64), FrameworkError> { // Return Result
+    ) -> Result<(PathBuf, u64), FrameworkError> {
         let final_bin_file_path = self
             .output_base_path
             .join(format!("{}.bin", self.output_filename));
@@ -556,7 +556,7 @@ where
         const FAST_COPY_BUFFER_SIZE: usize = 1024 * 1024;
 
         for result in worker_results {
-            let temp_file = File::open(&result.temp_bin_file_path)?; // Use ? directly
+            let temp_file = File::open(&result.temp_bin_file_path)?;
 
             let bytes_copied = fast_copy(temp_file, &mut final_bin_file_writer, FAST_COPY_BUFFER_SIZE)?;
 
@@ -564,7 +564,7 @@ where
             merge_pb.inc(bytes_copied);
         }
 
-        final_bin_file_writer.flush()?; // Use ? directly
+        final_bin_file_writer.flush()?;
         merge_pb.finish_with_message("Merging temporary .bin files complete.");
         Ok((final_bin_file_path, total_bytes_written_to_final_bin))
     }
@@ -572,9 +572,9 @@ where
     fn write_final_idx_file(
         &self,
         final_bin_path: &Path,
-        all_item_token_counts: &[u64], // Now takes u64
+        all_item_token_counts: &[u64],
         mp: Arc<MultiProgress>,
-    ) -> Result<(), FrameworkError> { // Return Result
+    ) -> Result<(), FrameworkError> {
         let final_idx_path = final_bin_path.with_extension("idx");
         mp.println(format!(
             "[MmapWriter] Writing final .idx file to {}",
@@ -582,7 +582,7 @@ where
         ))
         .unwrap_or_default();
         let mut idx_file_writer = BufWriter::new(
-            File::create(&final_idx_path)? // Use ? directly
+            File::create(&final_idx_path)?
         );
 
         let mut write_bytes = |bytes: &[u8]| -> Result<(), io::Error> {
@@ -647,17 +647,17 @@ where
                 }
             };
         }
-        // Add the final offset (total size of bin file) which is needed by some readers
+
          write_bytes(&current_byte_offset.to_le_bytes())?;
 
-        // Deprecated / Non-standard part? Write 0..=num_items as u64
-        // Keeping for compatibility if something relies on it, but it's redundant
-        // with the offsets array usually.
+
+
+
         for i in 0..=num_items {
             write_bytes(&(i as u64).to_le_bytes())?;
         }
 
-        idx_file_writer.flush()?; // Use ? directly
+        idx_file_writer.flush()?;
         mp.println(format!(
             "[MmapWriter] Finished writing .idx file (Format: {}).",
             if self.is_legacy_rwkv_format {

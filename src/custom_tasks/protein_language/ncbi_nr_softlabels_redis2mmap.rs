@@ -29,38 +29,46 @@ impl TaskNcbiNrSoftlabelsRedis2Mmap {
     }
 }
 
-const VOCABULARY: [(&str, usize); 31] = [
+const VOCABULARY: [(&str, usize); 39] = [
     ("<eos>", 0),
     ("<pad>", 1),
     ("<gap>", 2),
     ("<unk>", 3),
     ("<msk>", 4),
-    ("A", 5),
-    ("B", 6),
-    ("C", 7),
-    ("D", 8),
-    ("E", 9),
-    ("F", 10),
-    ("G", 11),
-    ("H", 12),
-    ("I", 13),
-    ("J", 14),
-    ("K", 15),
-    ("L", 16),
-    ("M", 17),
-    ("N", 18),
-    ("O", 19),
-    ("P", 20),
-    ("Q", 21),
-    ("R", 22),
-    ("S", 23),
-    ("T", 24),
-    ("U", 25),
-    ("V", 26),
-    ("W", 27),
-    ("X", 28),
-    ("Y", 29),
-    ("Z", 30),
+    ("<fim_pre>", 5),
+    ("<fim_mid>", 6),
+    ("<fim_suf>", 7),
+    ("A", 8),
+    ("B", 9),
+    ("C", 10),
+    ("D", 11),
+    ("E", 12),
+    ("F", 13),
+    ("G", 14),
+    ("H", 15),
+    ("I", 16),
+    ("J", 17),
+    ("K", 18),
+    ("L", 19),
+    ("M", 20),
+    ("N", 21),
+    ("O", 22),
+    ("P", 23),
+    ("Q", 24),
+    ("R", 25),
+    ("S", 26),
+    ("T", 27),
+    ("U", 28),
+    ("V", 29),
+    ("W", 30),
+    ("X", 31),
+    ("Y", 32),
+    ("Z", 33),
+    ("d", 34),
+    ("h", 35),
+    ("k", 36),
+    ("n", 37),
+    ("s", 38),
 ];
 
 const VECTOR_DIM: usize = 64;
@@ -156,60 +164,82 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
                     }
                 };
 
-                let total_freq: f32 = position_freqs_obj
-                    .values()
-                    .filter_map(|v| v.as_f64())
-                    .sum::<f64>() as f32;
+                let mut processed_freqs: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
+                const MIN_FREQ: f32 = 2e-3;
+
+
+                for (label, freq_value) in position_freqs_obj {
+                    if let Some(freq) = freq_value.as_f64() {
+                        let freq_f32 = freq as f32;
+                        processed_freqs.insert(label.clone(), if freq_f32 == 0.0 { MIN_FREQ } else { freq_f32 });
+                    } else {
+                        eprintln!(
+                            "Warning: Expected numeric frequency value for label '{}' in input, skipping this label.",
+                            label
+                        );
+                    }
+                }
+
+
+
+                let special_tokens: std::collections::HashSet<&str> = [
+                    "<eos>", "<pad>", "<gap>", "<unk>", "<msk>", 
+                    "<fim_pre>", "<fim_mid>", "<fim_suf>"
+                ].iter().cloned().collect();
+
+                for (vocab_label, _index) in VOCABULARY.iter() {
+                    if !special_tokens.contains(vocab_label) {
+                        processed_freqs.entry(vocab_label.to_string()).or_insert(MIN_FREQ);
+                    }
+                }
+                
+                let new_total_freq: f32 = processed_freqs.values().sum();
 
                 let mut position_vector = vec![0.0; VECTOR_DIM];
 
-                if total_freq > 0.0 {
-                    for (label, freq_value) in position_freqs_obj {
-                        if let Some(freq) = freq_value.as_f64() {
-                            let normalized_freq = (freq as f32) / total_freq;
-
-                            if let Some(index_ref) = vocab_to_index.get(label.as_str()) {
-                                let index = *index_ref;
-                                if index < VECTOR_DIM {
-                                    position_vector[index] = normalized_freq;
-                                } else {
-                                    eprintln!("Error: Vocab index {} out of bounds for vector dimension {}. Label: '{}'", index, VECTOR_DIM, label);
-                                    if let Some(unknown_index_ref) = vocab_to_index.get("<unk>") {
-                                        let unknown_index = *unknown_index_ref;
-                                        if unknown_index < VECTOR_DIM {
-                                            position_vector[unknown_index] += normalized_freq;
-                                        } else {
-                                            eprintln!("Error: <unk> index {} also out of bounds!", unknown_index);
-                                        }
-                                    } else {
-                                        eprintln!("Critical Error: <unk> token not found in vocab map!");
-                                    }
-                                }
+                if new_total_freq > 0.0 {
+                    for (label, freq) in processed_freqs {
+                        let normalized_freq = freq / new_total_freq;
+                        if let Some(index_ref) = vocab_to_index.get(label.as_str()) {
+                            let index = *index_ref;
+                            if index < VECTOR_DIM {
+                                position_vector[index] = normalized_freq;
                             } else {
+                                eprintln!("Error: Vocab index {} out of bounds for vector dimension {}. Label: '{}'", index, VECTOR_DIM, label);
+
                                 if let Some(unknown_index_ref) = vocab_to_index.get("<unk>") {
                                     let unknown_index = *unknown_index_ref;
                                     if unknown_index < VECTOR_DIM {
                                         position_vector[unknown_index] += normalized_freq;
                                     } else {
-                                        eprintln!("Error: <unk> index {} out of bounds!", unknown_index);
+                                        eprintln!("Error: <unk> index {} also out of bounds!", unknown_index);
                                     }
                                 } else {
-                                    eprintln!("Critical Error: <unk> token not found in vocab map during processing!");
+                                    eprintln!("Critical Error: <unk> token not found in vocab map!");
                                 }
-                                eprintln!(
-                                    "Warning: Encountered unmapped label '{}', mapping to <unk>.",
-                                    label
-                                );
                             }
                         } else {
+
+
                             eprintln!(
-                                "Warning: Expected numeric frequency value for label '{}', skipping.",
+                                "Warning: Encountered unmapped label '{}' during final vector construction, mapping to <unk>.",
                                 label
                             );
+                            if let Some(unknown_index_ref) = vocab_to_index.get("<unk>") {
+                                let unknown_index = *unknown_index_ref;
+                                if unknown_index < VECTOR_DIM {
+                                    position_vector[unknown_index] += normalized_freq;
+                                } else {
+                                    eprintln!("Error: <unk> index {} out of bounds!", unknown_index);
+                                }
+                            } else {
+                                eprintln!("Critical Error: <unk> token not found in vocab map during processing!");
+                            }
                         }
                     }
                 } else {
-                    eprintln!("Warning: Total frequency is zero for a position. Resulting vector will be all zeros.");
+                    eprintln!("Warning: Total frequency is zero or negative after processing for a position. Resulting vector will be all zeros or invalid.");
+
                 }
 
                 if position_vector.len() != VECTOR_DIM {

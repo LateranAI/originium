@@ -43,7 +43,7 @@ impl Task for TaskNcbiNrSoftlabelsJsonl2Redis {
             vec![DataEndpoint::Debug { prefix: None }]
         } else {
             vec![DataEndpoint::Redis {
-                url: "redis://:ssjxzkz@10.100.1.98:6379/1".to_string(),
+                url: "redis://:ssjxzkz@10.100.1.98:6379/2".to_string(),
                 key_prefix: "softlabel:".to_string(),
                 max_concurrent_tasks: 100,
             }]
@@ -63,27 +63,15 @@ impl Task for TaskNcbiNrSoftlabelsJsonl2Redis {
         &self,
         input_item: Self::ReadItem,
     ) -> Result<Option<Self::ProcessedItem>, FrameworkError> {
-        let key_prefix_cloned = if let Some(DataEndpoint::Redis { key_prefix, .. }) =
-            self.outputs_info.get(0)
-        {
-            key_prefix.clone()
+        let key_prefix = if TEST_MODE {
+            self.outputs_info.get(0).unwrap().unwrap_redis().1
         } else {
-            if TEST_MODE {
-                "".to_string()
-            } else {
-                return Err(FrameworkError::PipelineError {
-                    component_name: "TaskNcbiNrSoftlabelsJsonl2Redis::process".to_string(),
-                    source: Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "Requires a Redis endpoint configured as the first output to determine key_prefix.",
-                    )),
-                });
-            }
+            "".to_string()
         };
 
         let json_line_str = input_item.content;
         let current_id = self.id_counter.fetch_add(1, Ordering::SeqCst);
-        let key = format!("{}{}", key_prefix_cloned, current_id);
+        let key = format!("{}{}", key_prefix, current_id);
 
         let original_json_value: serde_json::Value = match serde_json::from_str(&json_line_str) {
             Ok(val) => val,
