@@ -71,7 +71,7 @@ const VOCABULARY: [(&str, usize); 39] = [
     ("s", 38),
 ];
 
-const VECTOR_DIM: usize = 64;
+const VECTOR_DIM: usize = 39;
 
 #[async_trait::async_trait]
 impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
@@ -80,24 +80,23 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::Redis {
-            url: "redis://:ssjxzkz@10.100.1.98:6379/1".to_string(),
-            key_prefix: "softlabel:".to_string(),
-            max_concurrent_tasks: 8192
+            url: "redis://:ssjxzkz@10.100.1.98:6379/3".to_string(),
+            key_prefix: "".to_string(),
+            max_concurrent_tasks: 8192,
         }]
     }
 
     fn get_outputs_info() -> Vec<DataEndpoint> {
-        vec![
-            DataEndpoint::Mmap {
-                base_path: "/public/home/ssjxzkz/Projects/originium/data".to_string(),
-                filename: "softlabel".to_string(),
-                num_threads: 1,
-                token_unit_type: MmapTokenUnitType::F32,
-                token_unit_len: VECTOR_DIM,
-                is_legacy_rwkv_format: false,
-                context_length: Some(4096),
-            },
-        ]
+        vec![DataEndpoint::Mmap {
+            base_path: "/public/home/ssjxzkz/Projects/originium/data".to_string(),
+            filename: "softlabel".to_string(),
+            num_devices: 1,
+            threads_per_device: 1,
+            token_unit_type: MmapTokenUnitType::F32,
+            token_unit_len: VECTOR_DIM,
+            is_legacy_rwkv_format: false,
+            context_length: None,
+        }]
     }
 
     fn read(&self) -> Box<dyn Fn(InputItem) -> Self::ReadItem + Send + Sync + 'static> {
@@ -164,14 +163,17 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
                     }
                 };
 
-                let mut processed_freqs: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
+                let mut processed_freqs: std::collections::HashMap<String, f32> =
+                    std::collections::HashMap::new();
                 const MIN_FREQ: f32 = 2e-3;
-
 
                 for (label, freq_value) in position_freqs_obj {
                     if let Some(freq) = freq_value.as_f64() {
                         let freq_f32 = freq as f32;
-                        processed_freqs.insert(label.clone(), if freq_f32 == 0.0 { MIN_FREQ } else { freq_f32 });
+                        processed_freqs.insert(
+                            label.clone(),
+                            if freq_f32 == 0.0 { MIN_FREQ } else { freq_f32 },
+                        );
                     } else {
                         eprintln!(
                             "Warning: Expected numeric frequency value for label '{}' in input, skipping this label.",
@@ -180,19 +182,28 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
                     }
                 }
 
-
-
                 let special_tokens: std::collections::HashSet<&str> = [
-                    "<eos>", "<pad>", "<gap>", "<unk>", "<msk>", 
-                    "<fim_pre>", "<fim_mid>", "<fim_suf>"
-                ].iter().cloned().collect();
+                    "<eos>",
+                    "<pad>",
+                    "<gap>",
+                    "<unk>",
+                    "<msk>",
+                    "<fim_pre>",
+                    "<fim_mid>",
+                    "<fim_suf>",
+                ]
+                .iter()
+                .cloned()
+                .collect();
 
                 for (vocab_label, _index) in VOCABULARY.iter() {
                     if !special_tokens.contains(vocab_label) {
-                        processed_freqs.entry(vocab_label.to_string()).or_insert(MIN_FREQ);
+                        processed_freqs
+                            .entry(vocab_label.to_string())
+                            .or_insert(MIN_FREQ);
                     }
                 }
-                
+
                 let new_total_freq: f32 = processed_freqs.values().sum();
 
                 let mut position_vector = vec![0.0; VECTOR_DIM];
@@ -205,22 +216,28 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
                             if index < VECTOR_DIM {
                                 position_vector[index] = normalized_freq;
                             } else {
-                                eprintln!("Error: Vocab index {} out of bounds for vector dimension {}. Label: '{}'", index, VECTOR_DIM, label);
+                                eprintln!(
+                                    "Error: Vocab index {} out of bounds for vector dimension {}. Label: '{}'",
+                                    index, VECTOR_DIM, label
+                                );
 
                                 if let Some(unknown_index_ref) = vocab_to_index.get("<unk>") {
                                     let unknown_index = *unknown_index_ref;
                                     if unknown_index < VECTOR_DIM {
                                         position_vector[unknown_index] += normalized_freq;
                                     } else {
-                                        eprintln!("Error: <unk> index {} also out of bounds!", unknown_index);
+                                        eprintln!(
+                                            "Error: <unk> index {} also out of bounds!",
+                                            unknown_index
+                                        );
                                     }
                                 } else {
-                                    eprintln!("Critical Error: <unk> token not found in vocab map!");
+                                    eprintln!(
+                                        "Critical Error: <unk> token not found in vocab map!"
+                                    );
                                 }
                             }
                         } else {
-
-
                             eprintln!(
                                 "Warning: Encountered unmapped label '{}' during final vector construction, mapping to <unk>.",
                                 label
@@ -230,20 +247,30 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
                                 if unknown_index < VECTOR_DIM {
                                     position_vector[unknown_index] += normalized_freq;
                                 } else {
-                                    eprintln!("Error: <unk> index {} out of bounds!", unknown_index);
+                                    eprintln!(
+                                        "Error: <unk> index {} out of bounds!",
+                                        unknown_index
+                                    );
                                 }
                             } else {
-                                eprintln!("Critical Error: <unk> token not found in vocab map during processing!");
+                                eprintln!(
+                                    "Critical Error: <unk> token not found in vocab map during processing!"
+                                );
                             }
                         }
                     }
                 } else {
-                    eprintln!("Warning: Total frequency is zero or negative after processing for a position. Resulting vector will be all zeros or invalid.");
-
+                    eprintln!(
+                        "Warning: Total frequency is zero or negative after processing for a position. Resulting vector will be all zeros or invalid."
+                    );
                 }
 
                 if position_vector.len() != VECTOR_DIM {
-                    eprintln!("Critical Error: Position vector length mismatch. Expected {}, got {}. Skipping position.", VECTOR_DIM, position_vector.len());
+                    eprintln!(
+                        "Critical Error: Position vector length mismatch. Expected {}, got {}. Skipping position.",
+                        VECTOR_DIM,
+                        position_vector.len()
+                    );
                     continue;
                 }
                 all_position_vectors.extend_from_slice(&position_vector);
@@ -257,32 +284,46 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
                         eos_vector[eos_index] = 1.0;
                         all_position_vectors.extend_from_slice(&eos_vector);
                     } else {
-                         eprintln!("Critical Error: <eos> index {} is out of bounds for VECTOR_DIM {}! Cannot append EOS token.", eos_index, VECTOR_DIM);
+                        eprintln!(
+                            "Critical Error: <eos> index {} is out of bounds for VECTOR_DIM {}! Cannot append EOS token.",
+                            eos_index, VECTOR_DIM
+                        );
                     }
                 } else {
-                     eprintln!("Critical Error: <eos> token not found in vocab map! Cannot append EOS token.");
+                    eprintln!(
+                        "Critical Error: <eos> token not found in vocab map! Cannot append EOS token."
+                    );
                 }
             }
 
             if all_position_vectors.is_empty() {
-                if softlabel_array.is_empty() {
+                return if softlabel_array.is_empty() {
                     eprintln!("Warning: Input softlabel_seq was empty. Returning None.");
-                    return Ok(None);
+                    Ok(None)
                 } else {
                     eprintln!(
                         "Warning: Processed non-empty softlabel_seq but resulted in an empty vector. Skipping item."
                     );
-                    return Ok(None);
+                    Ok(None)
                 }
             }
 
             if all_position_vectors.len() % VECTOR_DIM != 0 {
-                eprintln!("Critical Error: Final vector length {} is not a multiple of VECTOR_DIM {}. Corrupted data? Skipping item.", all_position_vectors.len(), VECTOR_DIM);
+                eprintln!(
+                    "Critical Error: Final vector length {} is not a multiple of VECTOR_DIM {}. Corrupted data? Skipping item.",
+                    all_position_vectors.len(),
+                    VECTOR_DIM
+                );
                 return Err(FrameworkError::PipelineError {
-                    component_name: "TaskNcbiNrSoftlabelsRedis2Mmap::process(final_length_check)".to_string(),
+                    component_name: "TaskNcbiNrSoftlabelsRedis2Mmap::process(final_length_check)"
+                        .to_string(),
                     source: Box::new(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        format!("Final vector length {} not multiple of {}", all_position_vectors.len(), VECTOR_DIM),
+                        format!(
+                            "Final vector length {} not multiple of {}",
+                            all_position_vectors.len(),
+                            VECTOR_DIM
+                        ),
                     )),
                 });
             }

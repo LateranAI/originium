@@ -139,10 +139,12 @@ pub trait Task: Clone + Send + Sync + 'static {
                         token_unit_type, ..
                     } => match token_unit_type {
                         MmapTokenUnitType::U16 => {
-                            Box::new(MmapReader::<Self::ReadItem, u16>::new(&input_config))
+                            Box::new(MmapReader::<Self::ReadItem, u16>::new(&input_config, None)
+                                .expect("Failed to create MmapReader<_, u16>"))
                         }
                         MmapTokenUnitType::F32 => {
-                            Box::new(MmapReader::<Self::ReadItem, f32>::new(&input_config))
+                            Box::new(MmapReader::<Self::ReadItem, f32>::new(&input_config, None)
+                                .expect("Failed to create MmapReader<_, f32>"))
                         }
                     },
                     DataEndpoint::Debug { .. } => {
@@ -562,7 +564,8 @@ pub enum DataEndpoint {
     Mmap {
         base_path: String,
         filename: String,
-        num_threads: usize,
+        num_devices: usize,
+        threads_per_device: usize,
         token_unit_type: MmapTokenUnitType,
         token_unit_len: usize,
         is_legacy_rwkv_format: bool,
@@ -616,28 +619,36 @@ impl DataEndpoint {
         }
     }
 
-    pub fn unwrap_mmap(&self) -> (String, String, usize, MmapTokenUnitType, usize, bool, Option<usize>) {
-        if let DataEndpoint::Mmap {
-            base_path,
-            filename,
-            num_threads,
-            token_unit_type,
-            token_unit_len,
-            is_legacy_rwkv_format,
-            context_length,
-        } = self
-        {
-            (
+    pub fn unwrap_mmap(&self) -> (String, String, usize, usize, MmapTokenUnitType, usize, bool, Option<usize>) {
+        match self {
+            DataEndpoint::Mmap {
+                base_path,
+                filename,
+                num_devices,
+                threads_per_device,
+                token_unit_type,
+                token_unit_len,
+                is_legacy_rwkv_format,
+                context_length,
+            } => (
                 base_path.clone(),
                 filename.clone(),
-                *num_threads,
+                *num_devices,
+                *threads_per_device,
                 *token_unit_type,
                 *token_unit_len,
                 *is_legacy_rwkv_format,
                 *context_length,
-            )
+            ),
+            _ => panic!("Called unwrap_mmap on non-Mmap DataEndpoint"),
+        }
+    }
+
+    pub fn unwrap_debug(&self) -> Option<String> {
+        if let DataEndpoint::Debug { prefix } = self {
+            prefix.clone()
         } else {
-            panic!("Called unwrap_mmap() on non-Mmap endpoint")
+            None
         }
     }
 }

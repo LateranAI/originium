@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use crate::errors::FrameworkError;
 
 const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 100;
 
@@ -119,39 +120,18 @@ where
     Item: Send + Sync + 'static + Debug,
     TokenUnit: Pod + Zeroable + Copy + Clone + Debug + serde::Serialize + Send + Sync + 'static,
 {
-    pub fn new(endpoint_config: &DataEndpoint) -> Self {
-        let (
-            base_path_str,
-            filename,
-            _expected_num_threads,
-            expected_token_unit_type,
-            expected_token_unit_len,
-            expected_is_legacy_format,
-        ) = if let DataEndpoint::Mmap {
-            base_path,
-            filename,
-            num_threads,
-            token_unit_type,
-            token_unit_len,
-            is_legacy_rwkv_format,
-            ..
-        } = endpoint_config
-        {
-            (
-                base_path.clone(),
-                filename.clone(),
-                *num_threads,
-                *token_unit_type,
-                *token_unit_len,
-                *is_legacy_rwkv_format,
-            )
-        } else {
-            panic!("[MmapReader::new] Incorrect DataEndpoint variant. Expected Mmap.");
-        };
+    pub fn new(endpoint_config: &DataEndpoint, _reader_id: Option<String>) -> Result<Self, FrameworkError> {
+        let (base_path_str, 
+            filename_str, 
+            _num_devices, 
+            _threads_per_device, 
+            expected_token_unit_type, 
+            expected_token_unit_len, 
+            expected_is_legacy_format, 
+            _expected_context_length // Destructure, but ignore for reader assertions
+        ) = endpoint_config.unwrap_mmap();
 
-        let base_path = PathBuf::from(base_path_str);
-        let bin_file_path = base_path.join(format!("{}.bin", filename));
-        let idx_file_path = base_path.join(format!("{}.idx", filename));
+        let idx_file_path = PathBuf::from(&base_path_str).join(format!("{}.idx", filename_str));
 
         let mut idx_file_handle = File::open(&idx_file_path).expect(&format!(
             "Configuration error: Failed to open index file {}",
@@ -272,6 +252,7 @@ where
             item_byte_offsets_vec.push(u64::from_le_bytes(buf));
         }
 
+        let bin_file_path = PathBuf::from(&base_path_str).join(format!("{}.bin", filename_str));
         let bin_file_handle = File::open(&bin_file_path).expect(&format!(
             "Configuration error: Failed to open binary file {}",
             bin_file_path.display()
@@ -287,7 +268,7 @@ where
             .max_capacity(10_000)
             .build();
 
-        Self {
+        Ok(Self {
             bin_mmap: Arc::new(bin_mmap_instance),
             item_logical_token_counts: Arc::new(item_logical_token_counts_vec),
             item_byte_offsets: Arc::new(item_byte_offsets_vec),
@@ -298,7 +279,7 @@ where
             token_unit_len: file_token_unit_len,
             is_legacy_format_file: file_is_legacy_format,
             _marker: PhantomData,
-        }
+        })
     }
 
     pub fn with_buffer_size(mut self, buffer_size: usize) -> Self {

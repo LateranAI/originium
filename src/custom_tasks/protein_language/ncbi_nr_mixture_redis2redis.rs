@@ -5,7 +5,6 @@ use crate::utils::common_type::RedisKVPair;
 use crate::writers::redis::RedisWriter;
 
 use serde::Deserialize;
-use serde_json::Value;
 use sqlx::FromRow;
 use crate::TEST_MODE;
 

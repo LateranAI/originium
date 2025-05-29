@@ -51,22 +51,22 @@ async fn main() {
     // }
     // println!("Task NcbiNr Softlabels Jsonl To Redis invocation completed.");
 
-    println!("Running Task NcbiNr Mixture Redis To Redis...");
-    let task_mixture = TaskNcbiNrMixtureRedisToRedis::new();
-    if let Err(e) = task_mixture.run().await {
-        eprintln!(
-            "Task NcbiNr Mixture Redis To Redis execution failed: {:?}",
-            e
-        );
-    }
-    println!("Task NcbiNr Mixture Redis To Redis invocation completed.");
-
-    // println!("Running Task RWKV Jsonl To Mmap...");
-    // let task_rwkv = TaskRwkvJsonl2Mmap::new();
-    // if let Err(e) = task_rwkv.run().await {
-    //     eprintln!("Task RWKV Jsonl To Mmap execution failed: {:?}", e);
+    // println!("Running Task NcbiNr Mixture Redis To Redis...");
+    // let task_mixture = TaskNcbiNrMixtureRedisToRedis::new();
+    // if let Err(e) = task_mixture.run().await {
+    //     eprintln!(
+    //         "Task NcbiNr Mixture Redis To Redis execution failed: {:?}",
+    //         e
+    //     );
     // }
-    // println!("Task RWKV Jsonl To Mmap invocation completed.");
+    // println!("Task NcbiNr Mixture Redis To Redis invocation completed.");
+
+    println!("Running Task RWKV Jsonl To Mmap...");
+    let task_rwkv = TaskRwkvJsonl2Mmap::new();
+    if let Err(e) = task_rwkv.run().await {
+        eprintln!("Task RWKV Jsonl To Mmap execution failed: {:?}", e);
+    }
+    println!("Task RWKV Jsonl To Mmap invocation completed.");
     //
     // println!("Running Task RWKV Mmap To Debug...");
     // let task_rwkv = TaskRwkvMmap2Debug::new();

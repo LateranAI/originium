@@ -170,7 +170,6 @@ where
 
                     if tx.is_closed() {
                         pb_process.println("[RedisReader] Main channel closed by receiver. Stopping key processing.");
-                        cursor = 0;
                         break;
                     }
                 }

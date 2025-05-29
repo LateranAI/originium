@@ -34,16 +34,17 @@ impl Task for TaskRwkvJsonl2Mmap {
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::LineDelimited {
-            path: "/public/home/ssjxzkz/Projects/rhineai/data/test_dataset/test.jsonl".to_string(),
+            path: "/public/home/ssjxzkz/Datasets/lm/OptimalScale_ClimbLab/merged_output.jsonl".to_string(),
             format: LineFormat::Jsonl,
         }]
     }
 
     fn get_outputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::Mmap {
-            base_path: "/public/home/ssjxzkz/Projects/rhineai/data/target/datasets.bin".to_string(),
+            base_path: "/public/home/ssjxzkz/Datasets/lm/OptimalScale_ClimbLab/mmap".to_string(),
             filename: "rwkv_data".to_string(),
-            num_threads: num_cpus::get().max(1),
+            num_devices: 1,
+            threads_per_device: num_cpus::get().max(1),
             token_unit_type: MmapTokenUnitType::U16,
             token_unit_len: 1,
             is_legacy_rwkv_format: false,

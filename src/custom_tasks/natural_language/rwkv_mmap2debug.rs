@@ -31,7 +31,8 @@ impl Task for TaskRwkvMmap2Debug {
         vec![DataEndpoint::Mmap {
             base_path: "/public/home/ssjxzkz/Projects/originium/data".to_string(),
             filename: "softlabel".to_string(),
-            num_threads: 1,
+            num_devices: 1,
+            threads_per_device: 1,
             token_unit_type: MmapTokenUnitType::F32,
             token_unit_len: 64,
             is_legacy_rwkv_format: false,
