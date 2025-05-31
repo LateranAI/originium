@@ -146,6 +146,10 @@ pub trait Task: Clone + Send + Sync + 'static {
                             Box::new(MmapReader::<Self::ReadItem, f32>::new(&input_config, None)
                                 .expect("Failed to create MmapReader<_, f32>"))
                         }
+                        MmapTokenUnitType::U32 => {
+                            Box::new(MmapReader::<Self::ReadItem, u32>::new(&input_config, None)
+                                .expect("Failed to create MmapReader<_, u32>"))
+                        }
                     },
                     DataEndpoint::Debug { .. } => {
                         return Err(FrameworkError::UnsupportedEndpointType {

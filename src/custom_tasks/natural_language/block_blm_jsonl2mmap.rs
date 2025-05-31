@@ -1,11 +1,9 @@
 use crate::custom_tasks::{DataEndpoint, FrameworkError, InputItem, LineFormat, Task, Writer};
 use crate::utils::common_type::{LineInput, MmapItem, MmapTokenUnitType};
-use crate::utils::tokenizer::Tokenizer;
 use crate::writers::debug::DebugWriter;
 use crate::writers::mmap::MmapWriter;
 use serde::Deserialize;
 use serde_json;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TextRecord {
@@ -13,42 +11,38 @@ pub struct TextRecord {
 }
 
 #[derive(Clone)]
-pub struct TaskRwkvJsonl2Mmap {
-    tokenizer: Arc<Tokenizer>,
+pub struct TaskBlockBLMJsonl2Mmap {
+    // 字符级处理，使用u32存储Unicode码点
 }
 
-impl TaskRwkvJsonl2Mmap {
+impl TaskBlockBLMJsonl2Mmap {
     pub fn new() -> Self {
-        let tokenizer = Arc::new(
-            Tokenizer::new("/public/home/ssjxzkz/Projects/originium/assets/vocab_v20230424.txt")
-                .expect("Failed to create tokenizer"),
-        );
-        Self { tokenizer }
+        Self {}
     }
 }
 
 #[async_trait::async_trait]
-impl Task for TaskRwkvJsonl2Mmap {
+impl Task for TaskBlockBLMJsonl2Mmap {
     type ReadItem = LineInput;
-    type ProcessedItem = MmapItem<u16>;
+    type ProcessedItem = MmapItem<u32>;  // 使用u32存储Unicode码点
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::LineDelimited {
-            path: "/public/home/ssjxzkz/Datasets/lm/OptimalScale_ClimbLab/merged_output.jsonl".to_string(),
+            path: "/path/to/input.jsonl".to_string(),
             format: LineFormat::Jsonl,
         }]
     }
 
     fn get_outputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::Mmap {
-            base_path: "/public/home/ssjxzkz/Datasets/lm/OptimalScale_ClimbLab/mmap".to_string(),
-            filename: "rwkv_data".to_string(),
-            num_devices: 6,
+            base_path: "/path/to/output".to_string(),
+            filename: "block_blm_data".to_string(),
+            num_devices: 1,
             threads_per_device: 1,
-            token_unit_type: MmapTokenUnitType::U16,
-            token_unit_len: 1,
+            token_unit_type: MmapTokenUnitType::U32,  // Unicode码点级别
+            token_unit_len: 1, // 每个u32代表一个Unicode字符
             is_legacy_rwkv_format: false,
-            context_length: Some(4096),
+            context_length: None,  // 不限制上下文长度
         }]
     }
 
@@ -67,21 +61,22 @@ impl Task for TaskRwkvJsonl2Mmap {
     ) -> Result<Option<Self::ProcessedItem>, FrameworkError> {
         let json_line_str = input_item.content;
 
-        let text_record: TextRecord = match serde_json::from_str(&json_line_str) {
+        let mut text_record: TextRecord = match serde_json::from_str(&json_line_str) {
             Ok(record) => record,
             Err(e) => {
-                return Err(FrameworkError::PipelineError {
-                    component_name: "TaskRwkvJsonl2Mmap::process".to_string(),
-                    source: Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("JSON line parsing failed: {}. Line: {}", e, json_line_str),
-                    )),
-                });
+                // Using ConfigError as it's about input data format which can be seen as a configuration problem for the task
+                return Err(FrameworkError::ConfigError(
+                    format!("JSON line parsing failed: {}. Line: {}", e, json_line_str),
+                ));
             }
         };
 
-        let tokens = self.tokenizer.encode(&text_record.text, true);
-        Ok(Some(MmapItem { tokens }))
+        text_record.text.push_str("<eos>");
+
+        let codepoints: Vec<u32> = text_record.text.chars().map(|c| c as u32).collect();
+        
+        
+        Ok(Some(MmapItem { tokens: codepoints }))
     }
 
     async fn get_writer(
@@ -90,7 +85,7 @@ impl Task for TaskRwkvJsonl2Mmap {
     ) -> Result<Box<dyn Writer<Self::ProcessedItem>>, FrameworkError> {
         match endpoint_config {
             DataEndpoint::Mmap { .. } => {
-                let writer = MmapWriter::<Self::ProcessedItem, u16>::new(endpoint_config);
+                let writer = MmapWriter::<Self::ProcessedItem, u32>::new(endpoint_config); // Specify u32 for TokenUnit
                 Ok(Box::new(writer))
             }
             DataEndpoint::Debug { prefix } => {
@@ -102,7 +97,7 @@ impl Task for TaskRwkvJsonl2Mmap {
             }
             _ => Err(FrameworkError::UnsupportedEndpointType {
                 endpoint_description: format!("{:?}", endpoint_config),
-                operation_description: "get_writer in TaskRwkvJsonl2Mmap".to_string(),
+                operation_description: "get_writer in TaskBlockBLMJsonl2Mmap".to_string(),
             }),
         }
     }

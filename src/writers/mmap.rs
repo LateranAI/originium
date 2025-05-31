@@ -273,10 +273,14 @@ where
 
         if self.threads_per_device == 1 {
             mp.println(format!("[MmapWriter Device {}] Single-thread mode.", device_id)).unwrap_or_default();
-            let processing_pb = mp.add(ProgressBar::new_spinner());
+            let processing_pb = mp.add(ProgressBar::new(0));
             processing_pb.enable_steady_tick(Duration::from_millis(120));
-            let pb_template = format!("[Device {} {{elapsed_precise}}] [DirectWrite {{spinner:.blue}}] {{pos}} items ({{per_sec}})", device_id);
-            processing_pb.set_style(ProgressStyle::with_template(&pb_template.replace("{", "{{").replace("}", "}}")).unwrap());
+            let pb_template = format!("[Device {} {{elapsed_precise}}] [DirectWrite] {{wide_bar:.cyan/blue}} {{pos}} items ({{per_sec}}, ETA: {{eta}})", device_id);
+            processing_pb.set_style(
+                ProgressStyle::with_template(&pb_template.replace("{", "{{").replace("}", "}}"))
+                    .unwrap()
+                    .progress_chars("##-"),
+            );
             let final_bin_file_path = self.output_base_path.join(format!("{}.bin", device_output_filename_base));
             let mut final_bin_file_writer = BufWriter::new(File::create(&final_bin_file_path)?);
             let mut logical_item_counts: Vec<u64> = Vec::new();
@@ -323,10 +327,14 @@ where
             }
             Ok(())
         } else {
-            let processing_pb = mp.add(ProgressBar::new_spinner());
+            let processing_pb = mp.add(ProgressBar::new(0));
             processing_pb.enable_steady_tick(Duration::from_millis(120));
-            let pb_template = format!("[Device {} {{elapsed_precise}}] [TempWrite {{spinner:.blue}}] {{pos}} items ({{per_sec}})", device_id);
-            processing_pb.set_style(ProgressStyle::with_template(&pb_template.replace("{", "{{").replace("}", "}}")).unwrap());
+            let pb_template = format!("[Device {} {{elapsed_precise}}] [TempWrite] {{wide_bar:.yellow/blue}} {{pos}} items ({{per_sec}}, ETA: {{eta}})", device_id);
+            processing_pb.set_style(
+                ProgressStyle::with_template(&pb_template.replace("{", "{{").replace("}", "}}"))
+                    .unwrap()
+                    .progress_chars("=> "),
+            );
             let (coordinator_input_tx, mut coordinator_input_rx): (TokioSender<Option<MmapItem<TokenUnit>>>, TokioReceiver<Option<MmapItem<TokenUnit>>>) = channel(self.threads_per_device * 2);
             let (worker_result_tx, worker_result_rx): (StdSender<TempBinWorkerResult>, StdReceiver<TempBinWorkerResult>) = mpsc::channel();
             let num_workers_for_coord = self.threads_per_device;

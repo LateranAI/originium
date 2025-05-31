@@ -46,6 +46,7 @@ impl Display for FastaItem {
 pub enum MmapTokenUnitType {
     U16 = 1,
     F32 = 2,
+    U32 = 3,
 }
 
 impl Default for MmapTokenUnitType {
