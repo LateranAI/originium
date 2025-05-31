@@ -47,12 +47,15 @@ where
         let max_concurrent_tasks = self.max_concurrent_tasks;
 
         let pb = mp.add(ProgressBar::new_spinner());
-        pb.enable_steady_tick(Duration::from_millis(120));
-        pb.set_style(
-            ProgressStyle::with_template(
-                "[{elapsed_precise}] [Writing to Redis {spinner:.green}] {pos} items written ({per_sec})"
-            ).unwrap()
+        let pb_template = format!(
+            "[RedisWriter SET {{elapsed_precise}}] {{spinner:.green}} {{pos}} items ({{per_sec}})"
         );
+        pb.set_style(
+            ProgressStyle::with_template(&pb_template)
+                .unwrap()
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
+        );
+        pb.enable_steady_tick(Duration::from_millis(100));
 
         loop {
             while workers.len() >= max_concurrent_tasks {
@@ -95,10 +98,12 @@ where
                 }
             }
         }
-        pb.finish_with_message(format!(
-            "Redis writer finished. Total items written: {}.",
-            pb.position()
-        ));
+        let final_msg = format!(
+            "[RedisWriter SET] Complete. {pos} items written. ({elapsed})",
+            pos = pb.position(),
+            elapsed = format!("{:.2?}", pb.elapsed())
+        );
+        pb.finish_with_message(final_msg);
         Ok(())
     }
 }

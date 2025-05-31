@@ -47,12 +47,15 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
         let mut item_count: u64 = 0;
 
         let pb_items = mp.add(ProgressBar::new_spinner());
-        pb_items.enable_steady_tick(std::time::Duration::from_millis(120));
-        pb_items.set_style(
-            ProgressStyle::with_template(
-                "[{elapsed_precise}] [FileWriter Processing {spinner:.blue}] {pos} items processed ({per_sec})",
-            ).unwrap()
+        let pb_items_template = format!(
+            "[FileWriter Distribute {{elapsed_precise}}] {{spinner:.blue}} {{pos}} items ({{per_sec}})"
         );
+        pb_items.set_style(
+            ProgressStyle::with_template(&pb_items_template)
+                .unwrap()
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
+        );
+        pb_items.enable_steady_tick(std::time::Duration::from_millis(100));
 
         let mut writer_task_handles = Vec::new();
         let mut temp_file_paths = Vec::new();
@@ -111,10 +114,12 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
             }
             current_worker_idx = (current_worker_idx + 1) % self.num_concurrent_writers;
         }
-        pb_items.finish_with_message(format!(
-            "[FileWriter] Item processing complete. {} items processed.",
-            item_count
-        ));
+        let pb_items_final_msg = format!(
+            "[FileWriter Distribute] Complete. {pos} items distributed. ({elapsed})",
+            pos = item_count,
+            elapsed = format!("{:.2?}", pb_items.elapsed())
+        );
+        pb_items.finish_with_message(pb_items_final_msg);
 
         for tx_to_worker in worker_senders {
             let _ = tx_to_worker.send(None).await;
@@ -179,19 +184,21 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
             return Ok(());
         }
 
-        mp.println(format!(
-            "[FileWriter] Merging {} temporary files into {}",
-            temp_file_paths.len(),
-            self.final_path.display()
-        ))
-        .unwrap_or_default();
-        let pb_merge = mp.add(ProgressBar::new(temp_file_paths.len() as u64));
-        pb_merge.set_style(
-            ProgressStyle::with_template(
-                "[{elapsed_precise}] [FileWriter Merging {bar:40.green/black}] {pos}/{len} files",
-            )
-            .unwrap(),
+        mp.println(format!("[FileWriter] Merging {} temp files...", temp_file_paths.len()))
+            .unwrap_or_default();
+
+        let total_bytes_to_merge = temp_file_paths.iter().filter_map(|p| std::fs::metadata(p).ok().map(|m| m.len())).sum();
+        let pb_merge = mp.add(ProgressBar::new(total_bytes_to_merge));
+
+        let pb_merge_template = format!(
+            "[FileWriter Merge {{elapsed_precise}}] {{bar:40.green/blue}} {{percent:>3}}% ({{bytes}}/{{total_bytes}}) {{bytes_per_sec}}, ETA: {{eta}}"
         );
+        pb_merge.set_style(
+            ProgressStyle::with_template(&pb_merge_template)
+                .unwrap()
+                .progress_chars("=> "),
+        );
+        pb_merge.enable_steady_tick(std::time::Duration::from_millis(100));
 
         let final_output_file = OpenOptions::new()
             .create(true)
@@ -221,7 +228,14 @@ impl<T: Display + Send + Sync + 'static + Debug> Writer<T> for FileWriter<T> {
             pb_merge.inc(1);
         }
         final_writer.flush()?;
-        pb_merge.finish_with_message("[FileWriter] Merging complete.");
+        let final_path_short = self.final_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let pb_merge_final_msg = format!(
+            "[FileWriter Merge] Complete. {pos} temp files merged into '{final_path_short}'. ({elapsed})",
+            pos = pb_merge.position(),
+            final_path_short = final_path_short,
+            elapsed = format!("{:.2?}", pb_merge.elapsed())
+        );
+        pb_merge.finish_with_message(pb_merge_final_msg);
 
         for temp_path in temp_file_paths {
             if temp_path.exists() {

@@ -272,17 +272,18 @@ where
         )).unwrap_or_default();
 
         if self.threads_per_device == 1 {
-            mp.println(format!("[MmapWriter Device {}] Single-thread mode.", device_id)).unwrap_or_default();
+            mp.println(format!("[MmapWriter D{}] Single-thread mode.", device_id)).unwrap_or_default();
             let processing_pb = mp.add(ProgressBar::new(0));
-            processing_pb.enable_steady_tick(Duration::from_millis(120));
-            let pb_template = format!("[Device {} {{elapsed_precise}}] [DirectWrite] {{wide_bar:.cyan/blue}} {{pos}} items ({{per_sec}}, ETA: {{eta}})", device_id);
+            let pb_template = format!("[D{} ST DirectWrite {{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos}} items ({{per_sec}})", device_id);
             processing_pb.set_style(
                 ProgressStyle::with_template(&pb_template)
                     .unwrap()
-                    .progress_chars("##-"),
+                    .progress_chars("=> "),
             );
+            processing_pb.enable_steady_tick(Duration::from_millis(100));
             let final_bin_file_path = self.output_base_path.join(format!("{}.bin", device_output_filename_base));
-            let mut final_bin_file_writer = BufWriter::new(File::create(&final_bin_file_path)?);
+            const DIRECT_WRITE_BUFFER_CAPACITY: usize = 1024 * 1024; // 1MB
+            let mut final_bin_file_writer = BufWriter::with_capacity(DIRECT_WRITE_BUFFER_CAPACITY, File::create(&final_bin_file_path)?);
             let mut logical_item_counts: Vec<u64> = Vec::new();
             let mut total_bytes_written: u64 = 0;
             let mut total_units_processed: u64 = 0;
@@ -309,7 +310,13 @@ where
                 total_bytes_written += token_bytes_slice.len() as u64;
             }
             final_bin_file_writer.flush()?;
-            processing_pb.finish_with_message(format!("[Device {} DirectWrite] Finished. Total: {}", device_id, processing_pb.position()));
+            let final_direct_write_msg = format!(
+                "[D{device_id} ST DirectWrite] Finished. {items} items. ({elapsed})",
+                device_id = device_id,
+                items = processing_pb.position(),
+                elapsed = format!("{:.2?}", processing_pb.elapsed())
+            );
+            processing_pb.finish_with_message(final_direct_write_msg);
             self.write_device_idx_file(device_id, &final_bin_file_path, &logical_item_counts, Arc::clone(&mp))?;
             mp.println(format!(
                 "[MmapWriter Device {} ST] Finished in {:?}. Items: {}. Units: {}. Size: {:.2}MB.",
@@ -328,13 +335,13 @@ where
             Ok(())
         } else {
             let processing_pb = mp.add(ProgressBar::new(0));
-            processing_pb.enable_steady_tick(Duration::from_millis(120));
-            let pb_template = format!("[Device {} {{elapsed_precise}}] [TempWrite] {{wide_bar:.yellow/blue}} {{pos}} items ({{per_sec}}, ETA: {{eta}})", device_id);
+            let pb_template = format!("[D{} MT Enqueue {{elapsed_precise}}] {{bar:40.yellow/blue}} {{pos}} items ({{per_sec}})", device_id);
             processing_pb.set_style(
                 ProgressStyle::with_template(&pb_template)
                     .unwrap()
                     .progress_chars("=> "),
             );
+            processing_pb.enable_steady_tick(Duration::from_millis(100));
             let (coordinator_input_tx, mut coordinator_input_rx): (TokioSender<Option<MmapItem<TokenUnit>>>, TokioReceiver<Option<MmapItem<TokenUnit>>>) = channel(self.threads_per_device * 2);
             let (worker_result_tx, worker_result_rx): (StdSender<TempBinWorkerResult>, StdReceiver<TempBinWorkerResult>) = mpsc::channel();
             let num_workers_for_coord = self.threads_per_device;
@@ -420,7 +427,13 @@ where
                 if coordinator_input_tx.send(None).await.is_err() { 
                     eprintln!("[D{} FwdToCoord] Failed to send end signal to its coordinator.", local_device_id_for_fwd);
                 }
-                pb_clone_for_forwarder.finish_with_message(format!("[D{} TempWrite] Finished processing items. Total: {}", local_device_id_for_fwd, pb_clone_for_forwarder.position()));
+                let final_enqueue_msg = format!(
+                    "[D{device_id} MT Enqueue] Finished. {pos} items enqueued. ({elapsed})",
+                    device_id = local_device_id_for_fwd,
+                    pos = pb_clone_for_forwarder.position(),
+                    elapsed = format!("{:.2?}", pb_clone_for_forwarder.elapsed())
+                );
+                pb_clone_for_forwarder.finish_with_message(final_enqueue_msg);
             });
 
             forward_to_coord_handle.await.map_err(|e| Box::new(FrameworkError::InternalError(format!("[D{}] Item forwarding task to coordinator panicked: {:?}", device_id, e))) as Box<dyn std::error::Error + Send + Sync + 'static>)?;
@@ -476,8 +489,9 @@ where
         let mut total_bytes_written_to_final_bin: u64 = 0;
         mp.println(format!("[D{}] Merging {} temp .bin files into {}", device_id, worker_results.len(), final_bin_file_path.display())).unwrap_or_default();
         let merge_pb = mp.add(ProgressBar::new(worker_results.iter().map(|r| r.bytes_written_to_temp_bin).sum()));
-        let pb_template = format!("[D{} {{elapsed_precise}}] Merging temp bins [{{bar:40.green/blue}}] {{bytes}}/{{total_bytes}} ({{eta}})", device_id);
-        merge_pb.set_style(ProgressStyle::with_template(&pb_template).unwrap().progress_chars("##-"));
+        let pb_template = format!("[D{} Merge {{elapsed_precise}}] {{bar:40.green/blue}} {{percent:>3}}%% ({{bytes}}/{{total_bytes}}) {{bytes_per_sec}}, ETA: {{eta}})", device_id);
+        merge_pb.set_style(ProgressStyle::with_template(&pb_template).unwrap().progress_chars("=> "));
+        merge_pb.enable_steady_tick(Duration::from_millis(100));
         const FAST_COPY_BUFFER_SIZE: usize = 1024 * 1024;
         for result in worker_results {
             let temp_file = File::open(&result.temp_bin_file_path)?;
@@ -486,7 +500,13 @@ where
             merge_pb.inc(bytes_copied);
         }
         final_bin_file_writer.flush()?;
-        merge_pb.finish_with_message(format!("[D{}] Merging temp .bin files complete.", device_id));
+        let final_merge_msg = format!(
+            "[D{device_id} Merge] Finished. {bytes_fmt} ({elapsed})",
+            device_id = device_id,
+            bytes_fmt = format_bytes(total_bytes_written_to_final_bin),
+            elapsed = format!("{:.2?}", merge_pb.elapsed())
+        );
+        merge_pb.finish_with_message(final_merge_msg);
         Ok((final_bin_file_path, total_bytes_written_to_final_bin))
     }
 
@@ -574,4 +594,20 @@ fn fast_copy(mut src: File, dst: &mut BufWriter<File>, buffer_size: usize) -> st
         total += n as u64;
     }
     Ok(total)
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+
+    if bytes >= GIB {
+        format!("{:.2} GiB", bytes as f64 / GIB as f64)
+    } else if bytes >= MIB {
+        format!("{:.2} MiB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{:.2} KiB", bytes as f64 / KIB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
 }

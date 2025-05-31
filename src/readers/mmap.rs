@@ -308,93 +308,68 @@ where
         mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(self.channel_buffer_size);
-        let parser = Arc::new(read_fn);
+        let total_items = self.num_logical_items;
+
+        let pb = mp.add(ProgressBar::new(total_items as u64));
+        let pb_template = format!(
+            "[MmapReader {{elapsed_precise}}] {{wide_bar:.blue}} {{percent:>3}}% ({{pos}}/{{len}}) {{per_sec}}, ETA: {{eta}}"
+        );
+        pb.set_style(
+            ProgressStyle::with_template(&pb_template)
+                .unwrap()
+                .progress_chars("=> "),
+        );
+        pb.enable_steady_tick(Duration::from_millis(100));
 
         let bin_mmap_clone = Arc::clone(&self.bin_mmap);
         let item_logical_token_counts_clone = Arc::clone(&self.item_logical_token_counts);
         let item_byte_offsets_clone = Arc::clone(&self.item_byte_offsets);
         let item_cache_clone = self.item_cache.clone();
-        let num_logical_items_clone = self.num_logical_items;
         let token_unit_len_clone = self.token_unit_len;
-        let reader_name = format!(
-            "[MmapReader Format: {}, Unit: {:?}, UnitLen: {}]",
-            if self.is_legacy_format_file {
-                "Legacy"
-            } else {
-                "Generic"
-            },
-            self.token_unit_type,
-            self.token_unit_len
-        );
+        let parser = Arc::new(read_fn);
 
         tokio::spawn(async move {
-            mp.println(format!(
-                "{} Opened dataset. Total logical items: {}",
-                reader_name, num_logical_items_clone
-            ))
-            .unwrap_or_default();
-
-            let pb = mp.add(ProgressBar::new(num_logical_items_clone as u64));
-            pb.set_style(
-                ProgressStyle::with_template(&format!(
-                    "[{{elapsed_precise}}] [Reading {} {{bar:40.cyan/blue}}] {{pos}}/{{len}} ({{percent}}%) {{bytes_per_sec}} {{eta}}",
-                    reader_name
-                ))
-                .expect("Failed to set progress bar style")
-                .progress_chars("##-"),
-            );
-
-            for i in 0..num_logical_items_clone {
+            for i in 0..total_items {
                 if tx.is_closed() {
-                    pb.println(format!(
-                        "{} Channel closed by receiver, stopping reading.",
-                        reader_name
-                    ));
+                    pb.println("[MmapReader] Channel closed, stopping.");
                     break;
                 }
 
-                match get_item_units_from_data::<TokenUnit>(
+                match get_item_units_from_data(
                     i,
-                    num_logical_items_clone,
+                    total_items,
                     &bin_mmap_clone,
                     &item_logical_token_counts_clone,
                     &item_byte_offsets_clone,
                     token_unit_len_clone,
                     &item_cache_clone,
                 ) {
-                    Some(arc_units) => {
-                        let json_string = serde_json::to_string(&*arc_units)
-                            .expect("Failed to serialize token unit data to JSON string");
-
-                        let input_item = InputItem::String(json_string);
-                        let final_item = parser(input_item);
-                        if tx.send(final_item).await.is_err() {
-                            pb.println(format!(
-                                "{} Failed to send item to channel, receiver likely dropped.",
-                                reader_name
-                            ));
+                    Some(units_arc) => {
+                        let json_string = serde_json::to_string(&*units_arc).expect("Failed to serialize Mmap item (Vec<TokenUnit>) to JSON string");
+                        let input_item = InputItem::String(json_string); 
+                        let processed_item = parser(input_item);
+                        if tx.send(processed_item).await.is_err() {
+                            pb.println("[MmapReader] Failed to send item, receiver dropped.");
                             break;
                         }
-                        pb.inc(1);
                     }
                     None => {
-                        pb.println(format!(
-                            "{} Warning: Failed to get item at index {} (total items {}). Possible data inconsistency or mmap read error.",
-                            reader_name, i, num_logical_items_clone
-                        ));
+                        pb.println(format!("[MmapReader] Failed to retrieve units for item index {}. Skipping.", i));
+                        // Decide if we should send a placeholder or just skip. For now, skipping.
                     }
                 }
+                pb.inc(1);
             }
-
             if !pb.is_finished() {
-                pb.finish_with_message(format!(
-                    "{} Finished reading. Processed {} items.",
-                    reader_name,
-                    pb.position()
-                ));
+                let final_msg = format!(
+                    "[MmapReader] Complete. {pos} items. ({elapsed})",
+                    pos = pb.position(),
+                    elapsed = format!("{:.2?}", pb.elapsed())
+                );
+                pb.finish_with_message(final_msg);
             }
-            drop(tx);
         });
+
         rx
     }
 }

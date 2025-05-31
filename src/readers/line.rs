@@ -18,20 +18,20 @@ use crate::custom_tasks::LineFormat;
 
 const JSONL_READER_CONFIG: LineReaderConfig = LineReaderConfig {
     reader_type_name: "JsonlReader",
-    scan_progress_template: "[{elapsed_precise}] [Scanning JSONL lines {bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})",
-    process_progress_template: "[{elapsed_precise}] [Processing JSONL lines {bar:40.green/black}] {pos}/{len} ({per_sec}, {eta})",
+    scan_progress_template: "[{elapsed_precise}] [{reader_name} Scan] {bar:40.cyan/blue} {percent:>3}% ({bytes}/{total_bytes}) {bytes_per_sec}, ETA: {eta}",
+    process_progress_template: "[{elapsed_precise}] [{reader_name} Process] {bar:40.green/blue} {percent:>3}% ({pos}/{len}) {per_sec}, ETA: {eta}",
 };
 
 const TSV_READER_CONFIG: LineReaderConfig = LineReaderConfig {
     reader_type_name: "TsvReader",
-    scan_progress_template: "[{elapsed_precise}] [Scanning TSV lines {bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})",
-    process_progress_template: "[{elapsed_precise}] [Processing TSV lines {bar:40.green/black}] {pos}/{len} ({per_sec}, {eta})",
+    scan_progress_template: "[{elapsed_precise}] [{reader_name} Scan] {bar:40.cyan/blue} {percent:>3}% ({bytes}/{total_bytes}) {bytes_per_sec}, ETA: {eta}",
+    process_progress_template: "[{elapsed_precise}] [{reader_name} Process] {bar:40.green/blue} {percent:>3}% ({pos}/{len}) {per_sec}, ETA: {eta}",
 };
 
 const PLAINTEXT_READER_CONFIG: LineReaderConfig = LineReaderConfig {
     reader_type_name: "PlainTextReader",
-    scan_progress_template: "[{elapsed_precise}] [Scanning Text lines {bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})",
-    process_progress_template: "[{elapsed_precise}] [Processing Text lines {bar:40.green/black}] {pos}/{len} ({per_sec}, {eta})",
+    scan_progress_template: "[{elapsed_precise}] [{reader_name} Scan] {bar:40.cyan/blue} {percent:>3}% ({bytes}/{total_bytes}) {bytes_per_sec}, ETA: {eta}",
+    process_progress_template: "[{elapsed_precise}] [{reader_name} Process] {bar:40.green/blue} {percent:>3}% ({pos}/{len}) {per_sec}, ETA: {eta}",
 };
 
 pub struct LineReader {
@@ -112,11 +112,13 @@ pub fn scan_line_offsets_core(
     mp: Arc<MultiProgress>,
 ) -> Arc<Vec<u64>> {
     let pb_scan = mp.add(ProgressBar::new(file_size));
+    let scan_template = config.scan_progress_template.replace("{reader_name}", config.reader_type_name);
     pb_scan.set_style(
-        ProgressStyle::with_template(config.scan_progress_template)
+        ProgressStyle::with_template(&scan_template)
             .unwrap()
-            .progress_chars("##-"),
+            .progress_chars("=> "),
     );
+    pb_scan.enable_steady_tick(std::time::Duration::from_millis(100));
 
     let chunk_size = (file_size + num_threads as u64 - 1) / num_threads as u64;
 
@@ -273,12 +275,13 @@ pub fn scan_line_offsets_core(
         })
         .collect();
 
-    pb_scan.finish_with_message(format!(
-        "[{}] Line scan complete for {}. Found approx. {} line starting offsets.",
-        config.reader_type_name,
-        file_path_str,
-        offsets_from_threads.iter().map(|v| v.len()).sum::<usize>()
-    ));
+    let final_scan_msg = format!(
+        "[{reader_name} Scan] Complete. Found ~{count} offsets. ({elapsed})",
+        reader_name = config.reader_type_name,
+        count = offsets_from_threads.iter().map(|v| v.len()).sum::<usize>(),
+        elapsed = format!("{:.2?}", pb_scan.elapsed())
+    );
+    pb_scan.finish_with_message(final_scan_msg);
 
     let mut combined_offsets: Vec<u64> = offsets_from_threads.into_iter().flatten().collect();
 
@@ -375,11 +378,13 @@ where
 
     let total_lines = line_offsets.len();
     let pb_process = mp.add(ProgressBar::new(total_lines as u64));
+    let process_template = config.process_progress_template.replace("{reader_name}", config.reader_type_name);
     pb_process.set_style(
-        ProgressStyle::with_template(config.process_progress_template)
+        ProgressStyle::with_template(&process_template)
             .unwrap()
-            .progress_chars("##-"),
+            .progress_chars("=> "),
     );
+    pb_process.enable_steady_tick(std::time::Duration::from_millis(100));
 
     let parser = Arc::new(read_fn);
 
@@ -500,10 +505,13 @@ where
             }
         }
         if !pb_process.is_finished() {
-            pb_process.finish_with_message(format!(
-                "[{}] Finished processing all lines for {}.",
-                config.reader_type_name, file_path_str
-            ));
+            let final_process_msg = format!(
+                "[{reader_name} Process] Complete. {pos} lines. ({elapsed})",
+                reader_name = config.reader_type_name,
+                pos = pb_process.position(),
+                elapsed = format!("{:.2?}", pb_process.elapsed())
+            );
+            pb_process.finish_with_message(final_process_msg);
         }
     });
 

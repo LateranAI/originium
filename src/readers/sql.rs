@@ -62,11 +62,13 @@ where
                 .unwrap_or_default();
 
             let pb_process = mp.add(ProgressBar::new_spinner());
+            let pb_template = format!("[SqlReader Fetch {{elapsed_precise}}] {{spinner:.blue}} {{pos}} rows ({{per_sec}})");
             pb_process.set_style(
-                 ProgressStyle::with_template("[{elapsed_precise}] [Reading SQL rows {spinner:.blue}] {pos} rows fetched ({per_sec})")
+                 ProgressStyle::with_template(&pb_template)
                     .unwrap()
+                    .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "), // Standard tick chars
             );
-            pb_process.enable_steady_tick(std::time::Duration::from_millis(120));
+            pb_process.enable_steady_tick(std::time::Duration::from_millis(100));
 
             let mut stream = sqlx::query_as::<sqlx::Any, Item>(&query).fetch(&pool);
             let mut items_processed: u64 = 0;
@@ -90,10 +92,12 @@ where
             }
 
             if !pb_process.is_finished() {
-                pb_process.finish_with_message(format!(
-                    "[SqlReader] Finished fetching rows. Total rows: {}",
-                    items_processed
-                ));
+                let final_msg = format!(
+                    "[SqlReader Fetch] Complete. {pos} rows fetched. ({elapsed})",
+                    pos = items_processed,
+                    elapsed = format!("{:.2?}", pb_process.elapsed())
+                );
+                pb_process.finish_with_message(final_msg);
             }
             mp.println(format!("[SqlReader] Disconnecting from database: {}", url))
                 .unwrap_or_default();

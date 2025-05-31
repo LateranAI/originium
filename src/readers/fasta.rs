@@ -37,18 +37,15 @@ where
             .map(|m| m.len())
             .unwrap_or(0);
         let pb_process = mp.add(ProgressBar::new(file_size));
+        let pb_template = format!(
+            "[FastaReader Scan {{elapsed_precise}}] {{bar:40.cyan/blue}} {{percent:>3}}% ({{bytes}}/{{total_bytes}}) {{bytes_per_sec}}, ETA: {{eta}}"
+        );
         pb_process.set_style(
-            ProgressStyle::with_template(
-                "[{elapsed_precise}] [Fasta {file_path}] {bar:40.cyan/blue} {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
-            ).unwrap().progress_chars("##-"),
+            ProgressStyle::with_template(&pb_template)
+                .unwrap()
+                .progress_chars("=> "),
         );
-        pb_process.set_message(
-            file_path_str
-                .split('/')
-                .last()
-                .unwrap_or_default()
-                .to_string(),
-        );
+        pb_process.enable_steady_tick(std::time::Duration::from_millis(100));
 
         tokio::task::spawn_blocking(move || {
             let mut reader = match parse_fastx_file(&file_path_str) {
@@ -111,11 +108,14 @@ where
             }
 
             if pb_process.position() < file_size && item_count > 0 {}
-            pb_process.finish_with_message(format!(
-                "[FastaReader] Done: {}. Records: {}.",
-                file_path_str.split('/').last().unwrap_or_default(),
-                item_count
-            ));
+            let file_path_short = file_path_str.split('/').last().unwrap_or_default().to_string();
+            let final_msg = format!(
+                "[FastaReader Scan] Complete. {item_count} records from '{file_path_short}'. ({elapsed})",
+                item_count = item_count,
+                file_path_short = file_path_short,
+                elapsed = format!("{:.2?}", pb_process.elapsed())
+            );
+            pb_process.finish_with_message(final_msg);
         });
 
         rx

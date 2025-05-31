@@ -44,12 +44,15 @@ impl<T: Send + Sync + 'static + Debug + Into<FastaItem>> Writer<T> for FastaWrit
         let mut writer = BufWriter::new(file);
 
         let pb_items = mp.add(ProgressBar::new_spinner());
-        pb_items.enable_steady_tick(std::time::Duration::from_millis(120));
-        pb_items.set_style(
-            ProgressStyle::with_template(
-                 "[{elapsed_precise}] [Writing Fasta {spinner:.green}] {pos} records written ({per_sec})"
-            ).unwrap()
+        let pb_template = format!(
+            "[FastaWriter Write {{elapsed_precise}}] {{spinner:.green}} {{pos}} records ({{per_sec}})"
         );
+        pb_items.set_style(
+            ProgressStyle::with_template(&pb_template)
+                .unwrap()
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
+        );
+        pb_items.enable_steady_tick(std::time::Duration::from_millis(100));
 
         while let Some(item) = rx.recv().await {
             let record: FastaItem = item.into();
@@ -75,10 +78,14 @@ impl<T: Send + Sync + 'static + Debug + Into<FastaItem>> Writer<T> for FastaWrit
 
         writer.flush()?;
 
-        pb_items.finish_with_message(format!(
-            "[FastaWriter] Record writing complete. {} records written.",
-            items_written
-        ));
+        let final_path_short = self.final_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let final_msg = format!(
+            "[FastaWriter Write] Complete. {pos} records written to '{final_path_short}'. ({elapsed})",
+            pos = items_written,
+            final_path_short = final_path_short,
+            elapsed = format!("{:.2?}", pb_items.elapsed())
+        );
+        pb_items.finish_with_message(final_msg);
 
         let duration = start_time.elapsed();
         mp.println(format!(

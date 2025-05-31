@@ -96,7 +96,7 @@ where
 
             let pb_process = mp.add(ProgressBar::new_spinner());
             pb_process.set_style(
-                ProgressStyle::with_template("[{elapsed_precise}] [Scanning Redis {spinner:.blue}] {pos} items processed ({per_sec}) | Keys: {len}")
+                ProgressStyle::with_template("[{elapsed_precise}] [RedisReader Scan {elapsed_precise}] {spinner:.blue} Scanned: {len} keys | Processed: {pos} items ({per_sec})")
                     .unwrap()
                     .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
             );
@@ -180,7 +180,13 @@ where
             }
 
             if !pb_process.is_finished() {
-                pb_process.finish_with_message(format!("[RedisReader] Finished scanning. Total items processed: {}. Total keys scanned: {}", items_processed, total_keys_scanned));
+                let final_msg = format!(
+                    "[RedisReader Scan] Complete. Processed {pos} items from {len} keys. ({elapsed})",
+                    pos = items_processed,
+                    len = total_keys_scanned,
+                    elapsed = format!("{:.2?}", pb_process.elapsed())
+                );
+                pb_process.finish_with_message(final_msg);
             }
             mp.println(format!(
                 "[RedisReader] Disconnecting from Redis: {}",

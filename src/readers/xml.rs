@@ -45,11 +45,15 @@ where
             .map(|m| m.len())
             .unwrap_or(0);
         let pb_process = mp.add(ProgressBar::new(file_size));
-        pb_process.set_style(
-            ProgressStyle::with_template(
-                "[{elapsed_precise}] [Processing XML {bar:40.blue/white}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
-            ).unwrap()
+        let pb_template = format!(
+            "[XmlReader Scan {{elapsed_precise}}] {{bar:40.blue/white}} {{percent:>3}}% ({{bytes}}/{{total_bytes}}) {{bytes_per_sec}}, ETA: {{eta}}"
         );
+        pb_process.set_style(
+            ProgressStyle::with_template(&pb_template)
+                .unwrap()
+                .progress_chars("=> "),
+        );
+        pb_process.enable_steady_tick(std::time::Duration::from_millis(100));
 
         tokio::task::spawn_blocking(move || {
             let file = match File::open(&file_path_str) {
@@ -174,10 +178,14 @@ where
                 }
                 buf.clear();
             }
-            pb_process.finish_with_message(format!(
-                "[XmlReader] Finished processing {}. Items found: {}",
-                file_path_str, item_count
-            ));
+            let final_msg = format!(
+                "[XmlReader Scan] Complete. {item_count} <{record_tag}> items found in {file_path}. ({elapsed})",
+                item_count = item_count,
+                record_tag = record_tag_bytes.iter().map(|&c| c as char).collect::<String>(), // Convert back for message
+                file_path = file_path_str,
+                elapsed = format!("{:.2?}", pb_process.elapsed())
+            );
+            pb_process.finish_with_message(final_msg);
         });
 
         rx

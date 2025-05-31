@@ -82,12 +82,15 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> Writer<T> for SqlWriter<T> 
         let insert_sql = self.generate_insert_sql();
 
         let pb_items = mp.add(ProgressBar::new_spinner());
-        pb_items.enable_steady_tick(std::time::Duration::from_millis(120));
-        pb_items.set_style(
-            ProgressStyle::with_template(
-                 "[{elapsed_precise}] [Writing SQL rows {spinner:.cyan}] {pos} rows written ({per_sec})"
-            ).unwrap()
+        let pb_template = format!(
+            "[SqlWriter INSERT {{elapsed_precise}}] {{spinner:.cyan}} {{pos}} rows ({{per_sec}})"
         );
+        pb_items.set_style(
+            ProgressStyle::with_template(&pb_template)
+                .unwrap()
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
+        );
+        pb_items.enable_steady_tick(std::time::Duration::from_millis(100));
 
         let mut batch = Vec::with_capacity(100);
         let batch_size = 100;
@@ -142,10 +145,13 @@ impl<T: Send + Sync + 'static + Debug + SqlBindable> Writer<T> for SqlWriter<T> 
                 .unwrap_or_default();
         }
 
-        pb_items.finish_with_message(format!(
-            "[SqlWriter] Row writing complete. {} rows written.",
-            items_written
-        ));
+        let final_msg = format!(
+            "[SqlWriter INSERT] Complete. {pos} rows written to table '{table_name}'. ({elapsed})",
+            pos = items_written,
+            table_name = self.table_name,
+            elapsed = format!("{:.2?}", pb_items.elapsed())
+        );
+        pb_items.finish_with_message(final_msg);
 
         let duration = start_time.elapsed();
         mp.println(format!(

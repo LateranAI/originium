@@ -11,9 +11,7 @@ pub struct TextRecord {
 }
 
 #[derive(Clone)]
-pub struct TaskBlockBLMJsonl2Mmap {
-    // 字符级处理，使用u32存储Unicode码点
-}
+pub struct TaskBlockBLMJsonl2Mmap {}
 
 impl TaskBlockBLMJsonl2Mmap {
     pub fn new() -> Self {
@@ -84,7 +82,9 @@ impl Task for TaskBlockBLMJsonl2Mmap {
     ) -> Result<Box<dyn Writer<Self::ProcessedItem>>, FrameworkError> {
         match endpoint_config {
             DataEndpoint::Mmap { .. } => {
-                let writer = MmapWriter::<Self::ProcessedItem, u32>::new(endpoint_config); // Specify u32 for TokenUnit
+                // Ensure we are matching the primary (first) endpoint for MmapWriter if that's intended
+                // For now, this branch might not be hit if Debug is always first.
+                let writer = MmapWriter::<Self::ProcessedItem, u32>::new(endpoint_config); 
                 Ok(Box::new(writer))
             }
             DataEndpoint::Debug { prefix } => {
