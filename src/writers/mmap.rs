@@ -277,7 +277,7 @@ where
             processing_pb.enable_steady_tick(Duration::from_millis(120));
             let pb_template = format!("[Device {} {{elapsed_precise}}] [DirectWrite] {{wide_bar:.cyan/blue}} {{pos}} items ({{per_sec}}, ETA: {{eta}})", device_id);
             processing_pb.set_style(
-                ProgressStyle::with_template(&pb_template.replace("{", "{{").replace("}", "}}"))
+                ProgressStyle::with_template(&pb_template)
                     .unwrap()
                     .progress_chars("##-"),
             );
@@ -331,7 +331,7 @@ where
             processing_pb.enable_steady_tick(Duration::from_millis(120));
             let pb_template = format!("[Device {} {{elapsed_precise}}] [TempWrite] {{wide_bar:.yellow/blue}} {{pos}} items ({{per_sec}}, ETA: {{eta}})", device_id);
             processing_pb.set_style(
-                ProgressStyle::with_template(&pb_template.replace("{", "{{").replace("}", "}}"))
+                ProgressStyle::with_template(&pb_template)
                     .unwrap()
                     .progress_chars("=> "),
             );
@@ -477,7 +477,7 @@ where
         mp.println(format!("[D{}] Merging {} temp .bin files into {}", device_id, worker_results.len(), final_bin_file_path.display())).unwrap_or_default();
         let merge_pb = mp.add(ProgressBar::new(worker_results.iter().map(|r| r.bytes_written_to_temp_bin).sum()));
         let pb_template = format!("[D{} {{elapsed_precise}}] Merging temp bins [{{bar:40.green/blue}}] {{bytes}}/{{total_bytes}} ({{eta}})", device_id);
-        merge_pb.set_style(ProgressStyle::with_template(&pb_template.replace("{","{{").replace("}","}}")).unwrap().progress_chars("##-"));
+        merge_pb.set_style(ProgressStyle::with_template(&pb_template).unwrap().progress_chars("##-"));
         const FAST_COPY_BUFFER_SIZE: usize = 1024 * 1024;
         for result in worker_results {
             let temp_file = File::open(&result.temp_bin_file_path)?;

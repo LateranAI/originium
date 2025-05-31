@@ -1,10 +1,11 @@
+use crate::custom_tasks::natural_language::block_blm_jsonl2mmap::TaskBlockBLMJsonl2Mmap;
 use crate::custom_tasks::natural_language::rwkv_jsonl2mmap::TaskRwkvJsonl2Mmap;
-use crate::custom_tasks::natural_language::rwkv_mmap2debug::TaskRwkvMmap2Debug;
-use crate::custom_tasks::protein_language::ncbi_nr_eukaryota_fasta2redis::TaskNcbiNrEukaryotaFastaToRedis;
-use crate::custom_tasks::protein_language::ncbi_nr_mixture_redis2redis::TaskNcbiNrMixtureRedisToRedis;
-use crate::custom_tasks::protein_language::ncbi_nr_singletons_tsv2redis::TaskNcbiNrSingletonsTsvToRedis;
-use crate::custom_tasks::protein_language::ncbi_nr_softlabels_jsonl2redis::TaskNcbiNrSoftlabelsJsonl2Redis;
-use crate::custom_tasks::protein_language::ncbi_nr_softlabels_redis2mmap::TaskNcbiNrSoftlabelsRedis2Mmap;
+// use crate::custom_tasks::natural_language::rwkv_mmap2debug::TaskRwkvMmap2Debug;
+// use crate::custom_tasks::protein_language::ncbi_nr_eukaryota_fasta2redis::TaskNcbiNrEukaryotaFastaToRedis;
+// use crate::custom_tasks::protein_language::ncbi_nr_mixture_redis2redis::TaskNcbiNrMixtureRedisToRedis;
+// use crate::custom_tasks::protein_language::ncbi_nr_singletons_tsv2redis::TaskNcbiNrSingletonsTsvToRedis;
+// use crate::custom_tasks::protein_language::ncbi_nr_softlabels_jsonl2redis::TaskNcbiNrSoftlabelsJsonl2Redis;
+// use crate::custom_tasks::protein_language::ncbi_nr_softlabels_redis2mmap::TaskNcbiNrSoftlabelsRedis2Mmap;
 use crate::custom_tasks::Task;
 
 mod custom_tasks;
@@ -40,7 +41,7 @@ async fn main() {
     //     );
     // }
     // println!("Task NcbiNr Singletons Tsv To Redis invocation completed.");
-    //
+
     // println!("Running Task NcbiNr Softlabels Jsonl To Redis...");
     // let task_softlabel = TaskNcbiNrSoftlabelsJsonl2Redis::new();
     // if let Err(e) = task_softlabel.run().await {
@@ -61,20 +62,6 @@ async fn main() {
     // }
     // println!("Task NcbiNr Mixture Redis To Redis invocation completed.");
 
-    println!("Running Task RWKV Jsonl To Mmap...");
-    let task_rwkv = TaskRwkvJsonl2Mmap::new();
-    if let Err(e) = task_rwkv.run().await {
-        eprintln!("Task RWKV Jsonl To Mmap execution failed: {:?}", e);
-    }
-    println!("Task RWKV Jsonl To Mmap invocation completed.");
-    //
-    // println!("Running Task RWKV Mmap To Debug...");
-    // let task_rwkv = TaskRwkvMmap2Debug::new();
-    // if let Err(e) = task_rwkv.run().await {
-    //     eprintln!("Task RWKV Mmap To Debug execution failed: {:?}", e);
-    // }
-    // println!("Task RWKV Mmap To Debug invocation completed.");
-    //
     // println!("Running Task NcbiNr Softlabels Redis To Mmap...");
     // let task_redis_to_mmap = TaskNcbiNrSoftlabelsRedis2Mmap::new();
     // if let Err(e) = task_redis_to_mmap.run().await {
@@ -83,4 +70,25 @@ async fn main() {
     //     println!("Task NcbiNr Softlabels Redis To Mmap completed.");
     // }
     // println!("Task NcbiNr Softlabels Redis To Mmap invocation attempt finished.");
+
+    // println!("Running Task RWKV Jsonl To Mmap...");
+    // let task_rwkv = TaskRwkvJsonl2Mmap::new();
+    // if let Err(e) = task_rwkv.run().await {
+    //     eprintln!("Task RWKV Jsonl To Mmap execution failed: {:?}", e);
+    // }
+    // println!("Task RWKV Jsonl To Mmap invocation completed.");
+
+    // println!("Running Task RWKV Mmap To Debug...");
+    // let task_rwkv = TaskRwkvMmap2Debug::new();
+    // if let Err(e) = task_rwkv.run().await {
+    //     eprintln!("Task RWKV Mmap To Debug execution failed: {:?}", e);
+    // }
+    // println!("Task RWKV Mmap To Debug invocation completed.");
+
+    println!("Running Task BlockBLM Jsonl To Mmap...");
+    let task_rwkv = TaskBlockBLMJsonl2Mmap::new();
+    if let Err(e) = task_rwkv.run().await {
+        eprintln!("Task RWKV Jsonl To Mmap execution failed: {:?}", e);
+    }
+    println!("Task RWKV Jsonl To Mmap invocation completed.");
 }

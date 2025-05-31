@@ -216,40 +216,57 @@ pub fn scan_line_offsets_core(
                     "[{}] Seek failed before reading effective chunk (path: {}, offset: {}): {}",
                     config.reader_type_name, file_path_str, current_pos_in_file, e
                 );
-                pb_scan.inc(physical_chunk_end.saturating_sub(physical_chunk_start));
+                pb_scan.inc(physical_chunk_end.saturating_sub(physical_chunk_start).saturating_sub(bytes_processed_in_chunk));
                 return local_offsets;
             }
 
-            let bytes_to_read_for_offsets = physical_chunk_end.saturating_sub(current_pos_in_file);
-            let mut chunk_data_buf = Vec::with_capacity(bytes_to_read_for_offsets as usize);
+            pb_scan.inc(bytes_processed_in_chunk);
 
-            match f
-                .take(bytes_to_read_for_offsets)
-                .read_to_end(&mut chunk_data_buf)
-            {
-                Ok(bytes_actually_read_for_offsets) => {
-                    for idx in
-                        memchr_iter(b'\n', &chunk_data_buf[..bytes_actually_read_for_offsets])
-                    {
-                        let offset_in_file = current_pos_in_file + idx as u64 + 1;
+            let mut effective_offset_scan_pos = current_pos_in_file;
+            let mut bytes_left_to_scan_for_offsets = physical_chunk_end.saturating_sub(effective_offset_scan_pos);
+            let mut temp_read_buffer = vec![0u8; 64 * 1024]; // 64KB reusable buffer
 
-                        if offset_in_file < physical_chunk_end {
-                            local_offsets.push(offset_in_file);
-                        } else {
+            while bytes_left_to_scan_for_offsets > 0 {
+                let bytes_to_read_this_iteration = temp_read_buffer.len().min(bytes_left_to_scan_for_offsets as usize);
+                if bytes_to_read_this_iteration == 0 { 
+                    break;
+                }
+
+                match f.read(&mut temp_read_buffer[..bytes_to_read_this_iteration]) {
+                    Ok(0) => { // EOF reached unexpectedly in the middle of our expected chunk.
+                        pb_scan.inc(bytes_left_to_scan_for_offsets); // Count remaining as processed
+                        bytes_left_to_scan_for_offsets = 0; // To exit loop
+                        break;
+                    }
+                    Ok(bytes_actually_read_iter) => {
+                        if bytes_actually_read_iter == 0 { // Should be caught by Ok(0), but double-check.
+                            pb_scan.inc(bytes_left_to_scan_for_offsets);
+                            bytes_left_to_scan_for_offsets = 0;
                             break;
                         }
+
+                        for idx in memchr_iter(b'\n', &temp_read_buffer[..bytes_actually_read_iter]) {
+                            let offset_in_file = effective_offset_scan_pos + idx as u64 + 1;
+                            if offset_in_file < physical_chunk_end {
+                                local_offsets.push(offset_in_file);
+                            } else {
+                                break; // Newline is beyond this thread's chunk
+                            }
+                        }
+                        
+                        effective_offset_scan_pos += bytes_actually_read_iter as u64;
+                        pb_scan.inc(bytes_actually_read_iter as u64);
+                        bytes_left_to_scan_for_offsets = bytes_left_to_scan_for_offsets.saturating_sub(bytes_actually_read_iter as u64);
                     }
-
-                    let initial_skip_bytes = current_pos_in_file - physical_chunk_start;
-                    pb_scan.inc(initial_skip_bytes + bytes_actually_read_for_offsets as u64);
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[{}] Failed to read effective chunk into buffer (path: {}): {}",
-                        config.reader_type_name, file_path_str, e
-                    );
-
-                    pb_scan.inc(bytes_to_read_for_offsets);
+                    Err(e) => {
+                        eprintln!(
+                            "[{}] Error reading during buffered offset scan (path: {}, offset: {}): {}",
+                            config.reader_type_name, file_path_str, effective_offset_scan_pos, e
+                        );
+                        pb_scan.inc(bytes_left_to_scan_for_offsets); // Count remaining as processed
+                        bytes_left_to_scan_for_offsets = 0; // To exit loop
+                        break;
+                    }
                 }
             }
             local_offsets

@@ -351,7 +351,7 @@ pub trait Task: Clone + Send + Sync + 'static {
                                 Err(join_error) => {
                                     eprintln!("[Task: {}] Panicked/cancelled processing task: {:?}", task_name, join_error);
                                 }
-                            }
+                            _ => {}}
                         },
 
                         maybe_item_from_broker = main_input_broker_rx.recv(), if active_processing_tasks.len() < current_max_concurrency => {

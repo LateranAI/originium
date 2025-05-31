@@ -28,21 +28,21 @@ impl Task for TaskBlockBLMJsonl2Mmap {
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::LineDelimited {
-            path: "/path/to/input.jsonl".to_string(),
+            path: "/public/home/ssjxzkz/Datasets/lm/OptimalScale_ClimbLab/merged_output.jsonl".to_string(),
             format: LineFormat::Jsonl,
         }]
     }
 
     fn get_outputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::Mmap {
-            base_path: "/path/to/output".to_string(),
+            base_path: "/public/home/ssjxzkz/Datasets/lm/OptimalScale_ClimbLab/mmap".to_string(),
             filename: "block_blm_data".to_string(),
             num_devices: 1,
             threads_per_device: 1,
-            token_unit_type: MmapTokenUnitType::U32,  // Unicode码点级别
-            token_unit_len: 1, // 每个u32代表一个Unicode字符
+            token_unit_type: MmapTokenUnitType::U32,
+            token_unit_len: 1,
             is_legacy_rwkv_format: false,
-            context_length: None,  // 不限制上下文长度
+            context_length: Some(4096),
         }]
     }
 
@@ -74,8 +74,7 @@ impl Task for TaskBlockBLMJsonl2Mmap {
         text_record.text.push_str("<eos>");
 
         let codepoints: Vec<u32> = text_record.text.chars().map(|c| c as u32).collect();
-        
-        
+
         Ok(Some(MmapItem { tokens: codepoints }))
     }
 
