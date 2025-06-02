@@ -44,9 +44,9 @@ impl Display for FastaItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum MmapTokenUnitType {
+    U8 = 0,
     U16 = 1,
     F32 = 2,
-    U32 = 3,
 }
 
 impl Default for MmapTokenUnitType {
@@ -67,7 +67,7 @@ impl<TokenUnit> Display for MmapItem<TokenUnit>
 where
     TokenUnit: Pod + Zeroable + Copy + Clone + Debug + Serialize + Send + Sync + 'static,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "MmapItem(units_count: {})", self.tokens.len())
     }
 }

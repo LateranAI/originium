@@ -22,7 +22,7 @@ impl TaskBlockBLMJsonl2Mmap {
 #[async_trait::async_trait]
 impl Task for TaskBlockBLMJsonl2Mmap {
     type ReadItem = LineInput;
-    type ProcessedItem = MmapItem<u32>;  // 使用u32存储Unicode码点
+    type ProcessedItem = MmapItem<u8>;
 
     fn get_inputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::LineDelimited {
@@ -37,7 +37,7 @@ impl Task for TaskBlockBLMJsonl2Mmap {
             filename: "block_blm_data".to_string(),
             num_devices: 1,
             threads_per_device: 1,
-            token_unit_type: MmapTokenUnitType::U32,
+            token_unit_type: MmapTokenUnitType::U8,
             token_unit_len: 1,
             is_legacy_rwkv_format: false,
             context_length: Some(4096),
@@ -62,18 +62,19 @@ impl Task for TaskBlockBLMJsonl2Mmap {
         let mut text_record: TextRecord = match serde_json::from_str(&json_line_str) {
             Ok(record) => record,
             Err(e) => {
-                // Using ConfigError as it's about input data format which can be seen as a configuration problem for the task
                 return Err(FrameworkError::ConfigError(
                     format!("JSON line parsing failed: {}. Line: {}", e, json_line_str),
                 ));
             }
         };
 
-        text_record.text.push_str("<eos>");
+        // 推荐使用 '\u{0003}'（ETX）作为 eos 符号，兼容 UTF-8
+        text_record.text.push('\u{0003}');
 
-        let codepoints: Vec<u32> = text_record.text.chars().map(|c| c as u32).collect();
+        // 转为 UTF-8 字节流：Vec<u8>
+        let bytes: Vec<u8> = text_record.text.as_bytes().to_vec();
 
-        Ok(Some(MmapItem { tokens: codepoints }))
+        Ok(Some(MmapItem { tokens: bytes }))
     }
 
     async fn get_writer(
@@ -84,7 +85,7 @@ impl Task for TaskBlockBLMJsonl2Mmap {
             DataEndpoint::Mmap { .. } => {
                 // Ensure we are matching the primary (first) endpoint for MmapWriter if that's intended
                 // For now, this branch might not be hit if Debug is always first.
-                let writer = MmapWriter::<Self::ProcessedItem, u32>::new(endpoint_config); 
+                let writer = MmapWriter::<Self::ProcessedItem, u8>::new(endpoint_config);
                 Ok(Box::new(writer))
             }
             DataEndpoint::Debug { prefix } => {

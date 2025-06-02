@@ -7,19 +7,19 @@ use crate::utils::common_type::{FastaItem, MmapTokenUnitType};
 use serde::Deserialize;
 use std::fmt::{Debug, Display};
 
-use sqlx::FromRow;
 use sqlx::any::AnyRow;
+use sqlx::FromRow;
 
 use crate::readers::Reader;
 use crate::writers::Writer;
 
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use futures::stream::{FuturesUnordered, StreamExt};
 use num_cpus;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -79,7 +79,7 @@ pub trait Task: Clone + Send + Sync + 'static {
 
         mp.println("Starting Task (Framework Run V10 - MultiProgress Enabled)")
             .unwrap_or_default();
-        let start_time = std::time::Instant::now();
+        let start_time = Instant::now();
 
         let input_configs = Self::get_inputs_info();
         let output_configs = Self::get_outputs_info();
@@ -90,9 +90,9 @@ pub trait Task: Clone + Send + Sync + 'static {
             let duration = start_time.elapsed();
             mp.println(format!("Task finished (no input) in {:?}.", duration))
                 .unwrap_or_default();
-            mp.println(format!("  Total items read into broker: 0"))
+            mp.println("Total items read into broker: 0".to_string())
                 .unwrap_or_default();
-            mp.println(format!("  Total items processed and sent to writer(s): 0"))
+            mp.println("Total items processed and sent to writer(s): 0".to_string())
                 .unwrap_or_default();
             return Ok(());
         }
@@ -138,24 +138,22 @@ pub trait Task: Clone + Send + Sync + 'static {
                     DataEndpoint::Mmap {
                         token_unit_type, ..
                     } => match token_unit_type {
-                        MmapTokenUnitType::U16 => {
-                            Box::new(MmapReader::<Self::ReadItem, u16>::new(&input_config, None)
-                                .expect("Failed to create MmapReader<_, u16>"))
-                        }
-                        MmapTokenUnitType::F32 => {
-                            Box::new(MmapReader::<Self::ReadItem, f32>::new(&input_config, None)
-                                .expect("Failed to create MmapReader<_, f32>"))
-                        }
-                        MmapTokenUnitType::U32 => {
-                            Box::new(MmapReader::<Self::ReadItem, u32>::new(&input_config, None)
-                                .expect("Failed to create MmapReader<_, u32>"))
-                        }
+                        MmapTokenUnitType::U8 => Box::new(
+                            MmapReader::<Self::ReadItem, u8>::new(&input_config, None)
+                                .expect("Failed to create MmapReader<_, u32>"),
+                        ),
+                        MmapTokenUnitType::U16 => Box::new(
+                            MmapReader::<Self::ReadItem, u16>::new(&input_config, None)
+                                .expect("Failed to create MmapReader<_, u16>"),
+                        ),
+                        MmapTokenUnitType::F32 => Box::new(
+                            MmapReader::<Self::ReadItem, f32>::new(&input_config, None)
+                                .expect("Failed to create MmapReader<_, f32>"),
+                        ),
                     },
                     DataEndpoint::Debug { .. } => {
                         return Err(FrameworkError::UnsupportedEndpointType {
-                            endpoint_description: format!(
-                                "Debug endpoint cannot be used as a direct reader source in this factory version."
-                            ),
+                            endpoint_description: "Debug endpoint cannot be used as a direct reader source in this factory version.".to_string(),
                             operation_description: "Automated reader creation in Task::run"
                                 .to_string(),
                         });
@@ -623,7 +621,18 @@ impl DataEndpoint {
         }
     }
 
-    pub fn unwrap_mmap(&self) -> (String, String, usize, usize, MmapTokenUnitType, usize, bool, Option<usize>) {
+    pub fn unwrap_mmap(
+        &self,
+    ) -> (
+        String,
+        String,
+        usize,
+        usize,
+        MmapTokenUnitType,
+        usize,
+        bool,
+        Option<usize>,
+    ) {
         match self {
             DataEndpoint::Mmap {
                 base_path,
