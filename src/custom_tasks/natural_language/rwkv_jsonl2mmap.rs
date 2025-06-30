@@ -42,7 +42,7 @@ impl Task for TaskRwkvJsonl2Mmap {
     fn get_outputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::Mmap {
             base_path: "/public/home/ssjxzkz/Datasets/lm/OptimalScale_ClimbLab/mmap".to_string(),
-            filename: "rwkv_data".to_string(),
+            filename: "virtuoso_data".to_string(),
             num_devices: 6,
             threads_per_device: 1,
             token_unit_type: MmapTokenUnitType::U16,
