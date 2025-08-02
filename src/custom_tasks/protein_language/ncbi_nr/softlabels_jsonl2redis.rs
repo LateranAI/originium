@@ -35,6 +35,7 @@ impl Task for TaskNcbiNrSoftlabelsJsonl2Redis {
             path: "/public/home/ssjxzkz/Datasets/prot/ncbi_nr/processed/nr.softlabel.jsonl"
                 .to_string(),
             format: LineFormat::Jsonl,
+            line_limit: None,
         }]
     }
 

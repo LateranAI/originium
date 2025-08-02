@@ -36,6 +36,7 @@ impl Task for TaskRwkvJsonl2Mmap {
         vec![DataEndpoint::LineDelimited {
             path: "/public/home/ssjxzkz/Datasets/lm/OptimalScale_ClimbLab/merged_output.jsonl".to_string(),
             format: LineFormat::Jsonl,
+            line_limit: Some(5000),
         }]
     }
 
@@ -43,12 +44,12 @@ impl Task for TaskRwkvJsonl2Mmap {
         vec![DataEndpoint::Mmap {
             base_path: "/public/home/ssjxzkz/Datasets/lm/OptimalScale_ClimbLab/mmap".to_string(),
             filename: "virtuoso_data".to_string(),
-            num_devices: 6,
+            num_devices: 1,
             threads_per_device: 1,
             token_unit_type: MmapTokenUnitType::U16,
             token_unit_len: 1,
             is_legacy_rwkv_format: false,
-            context_length: Some(4096),
+            context_length: Some(128),
         }]
     }
 

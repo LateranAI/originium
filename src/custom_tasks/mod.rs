@@ -1,5 +1,6 @@
 pub mod natural_language;
 pub mod protein_language;
+pub mod genome_language;
 
 use crate::errors::FrameworkError;
 use crate::utils::common_type::{FastaItem, MmapTokenUnitType};
@@ -110,8 +111,8 @@ pub trait Task: Clone + Send + Sync + 'static {
                 Arc::clone(&total_items_read_to_broker_for_readers);
             for input_config in input_configs {
                 let reader_instance: Box<dyn Reader<Self::ReadItem>> = match &input_config {
-                    DataEndpoint::LineDelimited { path, format } => Box::new(
-                        crate::readers::line::LineReader::new(path.clone(), format.clone()),
+                    DataEndpoint::LineDelimited { path, format, line_limit } => Box::new(
+                        crate::readers::line::LineReader::new(path.clone(), format.clone(), *line_limit),
                     ),
                     DataEndpoint::Xml { path } => {
                         let record_tag = "record".to_string();
@@ -543,6 +544,7 @@ pub enum DataEndpoint {
     LineDelimited {
         path: String,
         format: LineFormat,
+        line_limit: Option<usize>,
     },
     Xml {
         path: String,

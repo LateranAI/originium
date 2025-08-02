@@ -122,6 +122,7 @@ impl Task for TaskNcbiNrSingletonsTsvToRedis {
             path: "/public/home/ssjxzkz/Datasets/prot/ncbi_nr/processed/nr.singletons.tsv"
                 .to_string(),
             format: LineFormat::Tsv,
+            line_limit: None,
         }]
     }
 

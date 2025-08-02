@@ -28,13 +28,14 @@ impl Task for TaskBlockBLMJsonl2Mmap {
         vec![DataEndpoint::LineDelimited {
             path: "/public/home/ssjxzkz/Datasets/lm/OptimalScale_ClimbLab/merged_output.jsonl".to_string(),
             format: LineFormat::Jsonl,
+            line_limit: Some(5_000),
         }]
     }
 
     fn get_outputs_info() -> Vec<DataEndpoint> {
         vec![DataEndpoint::Mmap {
             base_path: "/public/home/ssjxzkz/Datasets/lm/OptimalScale_ClimbLab/mmap".to_string(),
-            filename: "block_blm_data".to_string(),
+            filename: "block_blm_partial_data".to_string(),
             num_devices: 1,
             threads_per_device: 1,
             token_unit_type: MmapTokenUnitType::U8,

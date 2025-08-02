@@ -1,5 +1,2 @@
-pub mod ncbi_nr_eukaryota_fasta2redis;
-pub mod ncbi_nr_singletons_tsv2redis;
-pub mod ncbi_nr_softlabels_jsonl2redis;
-pub mod ncbi_nr_mixture_redis2redis;
-pub mod ncbi_nr_softlabels_redis2mmap;
+pub mod ncbi_nr;
+pub mod ncbi_genome;
