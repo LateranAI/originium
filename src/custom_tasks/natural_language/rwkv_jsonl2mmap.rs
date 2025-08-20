@@ -47,7 +47,7 @@ impl Task for TaskRwkvJsonl2Mmap {
             num_devices: 1,
             threads_per_device: 1,
             token_unit_type: MmapTokenUnitType::U16,
-            token_unit_len: 1,
+            num_units_per_token: 1,
             is_legacy_rwkv_format: false,
             context_length: Some(128),
         }]

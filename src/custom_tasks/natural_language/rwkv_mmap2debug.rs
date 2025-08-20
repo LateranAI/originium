@@ -34,7 +34,7 @@ impl Task for TaskRwkvMmap2Debug {
             num_devices: 1,
             threads_per_device: 1,
             token_unit_type: MmapTokenUnitType::F32,
-            token_unit_len: 64,
+            num_units_per_token: 64,
             is_legacy_rwkv_format: false,
             context_length: None,
         }]

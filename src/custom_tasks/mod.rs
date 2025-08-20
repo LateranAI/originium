@@ -1,6 +1,5 @@
 pub mod natural_language;
 pub mod protein_language;
-pub mod genome_language;
 
 use crate::errors::FrameworkError;
 use crate::utils::common_type::{FastaItem, MmapTokenUnitType};
@@ -571,7 +570,7 @@ pub enum DataEndpoint {
         num_devices: usize,
         threads_per_device: usize,
         token_unit_type: MmapTokenUnitType,
-        token_unit_len: usize,
+        num_units_per_token: usize,
         is_legacy_rwkv_format: bool,
         context_length: Option<usize>,
     },
@@ -642,7 +641,7 @@ impl DataEndpoint {
                 num_devices,
                 threads_per_device,
                 token_unit_type,
-                token_unit_len,
+                num_units_per_token,
                 is_legacy_rwkv_format,
                 context_length,
             } => (
@@ -651,7 +650,7 @@ impl DataEndpoint {
                 *num_devices,
                 *threads_per_device,
                 *token_unit_type,
-                *token_unit_len,
+                *num_units_per_token,
                 *is_legacy_rwkv_format,
                 *context_length,
             ),

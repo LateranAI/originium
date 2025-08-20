@@ -93,7 +93,7 @@ impl Task for TaskNcbiNrSoftlabelsRedis2Mmap {
             num_devices: 1,
             threads_per_device: 1,
             token_unit_type: MmapTokenUnitType::F32,
-            token_unit_len: VECTOR_DIM,
+            num_units_per_token: VECTOR_DIM,
             is_legacy_rwkv_format: false,
             context_length: None,
         }]

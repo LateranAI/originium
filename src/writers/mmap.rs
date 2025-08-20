@@ -22,19 +22,18 @@ use tokio::sync::mpsc::{Sender as TokioSender, channel};
 use tokio::sync::Mutex as TokioMutex;
 use primes;
 
-const LEGACY_MMAP_BINIDX_MAGIC_HDR: &[u8] = b"MMIDIDX\x00\x00";
-const LEGACY_MMAP_BINIDX_VERSION: [u8; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
-const LEGACY_MMAP_BINIDX_DTYPE_U16: u8 = 8;
+const MMAP_MAGIC_HDR: &[u8] = b"MMIDIDX\x00\x00";
+const RWKV_MMAP_VERSION: [u8; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
+const RWKV_MMAP_DTYPE_U16: u8 = 8;
 
-const GENERIC_MMAP_MAGIC_HDR: &[u8] = b"MMIDIDX\x00\x00";
-const GENERIC_MMAP_VERSION: [u8; 8] = [2, 0, 0, 0, 0, 0, 0, 0];
+const ORIGINIUM_MMAP_VERSION: [u8; 8] = [2, 0, 0, 0, 0, 0, 0, 0];
 
 struct TempBinWorkerResult {
     worker_id: usize,
-    logical_item_counts: Vec<u32>,
-    temp_bin_file_path: PathBuf,
-    bytes_written_to_temp_bin: u64,
-    total_units_processed_by_worker: u64,
+    nums_tokens_per_line: Vec<u32>,
+    temp_bin_path: PathBuf,
+    temp_bin_size: u64,
+    num_token_units_processed: u64,
 }
 
 pub struct MmapWriter<T, TokenUnit>
@@ -47,7 +46,7 @@ where
     num_devices: usize,
     threads_per_device: usize,
     token_unit_type: MmapTokenUnitType,
-    token_unit_len: usize,
+    num_units_per_token: usize,
     is_legacy_rwkv_format: bool,
     context_length: Option<usize>,
     _phantom_t: PhantomData<T>,
@@ -62,13 +61,13 @@ where
 {
     async fn pipeline(
         &self,
-        incoming_item_rx: TokioReceiver<T>,
+        incoming_line_rx: TokioReceiver<T>,
         mp: Arc<MultiProgress>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
         mp.println(format!(
             "[MmapWriter] Pipeline started. Output: '{}/{}_device_*'. Devices: {}, Threads/Device: {}. Format: {}, UnitType: {:?}, UnitLen: {}",
             self.output_base_path.display(), self.output_filename, self.num_devices, self.threads_per_device,
-            if self.is_legacy_rwkv_format { "Legacy RWKV" } else { "Generic" }, self.token_unit_type, self.token_unit_len
+            if self.is_legacy_rwkv_format { "Legacy RWKV" } else { "Generic" }, self.token_unit_type, self.num_units_per_token
         )).unwrap_or_default();
         let overall_start_time = Instant::now();
 
@@ -77,7 +76,7 @@ where
             let (mmap_item_tx, mmap_item_rx): (TokioSender<MmapItem<TokenUnit>>, TokioReceiver<MmapItem<TokenUnit>>)= channel(self.threads_per_device * 2 + 10);
             
             let conversion_task_handle = tokio::spawn(async move {
-                let mut original_rx = incoming_item_rx;
+                let mut original_rx = incoming_line_rx;
                 while let Some(original_item) = original_rx.recv().await {
                     let mmap_item: MmapItem<TokenUnit> = original_item.into();
                     if mmap_item_tx.send(mmap_item).await.is_err() {
@@ -96,17 +95,17 @@ where
                 self.num_devices, self.threads_per_device
             )).unwrap_or_default();
 
-            let shared_original_item_rx = Arc::new(TokioMutex::new(incoming_item_rx));
+            let shared_line_rx = Arc::new(TokioMutex::new(incoming_line_rx));
             let mut device_task_handles = Vec::new();
 
             for device_id in 0..self.num_devices {
-                let task_shared_rx = Arc::clone(&shared_original_item_rx);
+                let task_shared_rx = Arc::clone(&shared_line_rx);
                 let task_mp = Arc::clone(&mp);
                 let task_output_base_path = self.output_base_path.clone();
                 let task_output_filename = self.output_filename.clone();
                 let task_threads_per_device = self.threads_per_device;
                 let task_token_unit_type = self.token_unit_type;
-                let task_token_unit_len = self.token_unit_len;
+                let task_num_units_per_token = self.num_units_per_token;
                 let task_is_legacy_format = self.is_legacy_rwkv_format;
                 let task_context_length = self.context_length;
 
@@ -119,7 +118,7 @@ where
                         task_output_filename,
                         task_threads_per_device,
                         task_token_unit_type,
-                        task_token_unit_len,
+                        task_num_units_per_token,
                         task_is_legacy_format,
                         task_context_length,
                     ).await
@@ -147,13 +146,13 @@ where
 
 async fn run_device_writer_task<T, TokenUnit>(
     device_id: usize,
-    shared_original_item_rx_arc_mutex: Arc<TokioMutex<TokioReceiver<T>>>,
+    shared_line_rx: Arc<TokioMutex<TokioReceiver<T>>>,
     mp: Arc<MultiProgress>,
     output_base_path: PathBuf,
     output_filename: String,
     threads_per_device: usize,
     token_unit_type: MmapTokenUnitType,
-    token_unit_len: usize,
+    num_units_per_token: usize,
     is_legacy_rwkv_format: bool,
     context_length: Option<usize>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> 
@@ -162,16 +161,16 @@ where
     TokenUnit: Pod + Zeroable + Copy + Clone + Debug + Serialize + Send + Sync + 'static,
 {
     let channel_capacity = (threads_per_device * 2).max(10);
-    let (device_specific_mmap_item_tx, device_specific_mmap_item_rx): (TokioSender<MmapItem<TokenUnit>>, TokioReceiver<MmapItem<TokenUnit>>) = channel(channel_capacity);
+            let (device_line_tx, device_line_rx): (TokioSender<MmapItem<TokenUnit>>, TokioReceiver<MmapItem<TokenUnit>>) = channel(channel_capacity);
 
     let mp_clone_fetch = Arc::clone(&mp);
     let data_fetch_task = tokio::spawn(async move {
         loop {
-            let mut locked_rx = shared_original_item_rx_arc_mutex.lock().await;
+            let mut locked_rx = shared_line_rx.lock().await;
             match locked_rx.recv().await {
                 Some(original_item) => {
                     let mmap_item: MmapItem<TokenUnit> = original_item.into();
-                    if device_specific_mmap_item_tx.send(mmap_item).await.is_err() {
+                    if device_line_tx.send(mmap_item).await.is_err() {
                         mp_clone_fetch.println(format!("[Device {} Fetch] Failed to send MmapItem to internal channel. Processor task likely exited.", device_id)).unwrap_or_default();
                         break;
                     }
@@ -191,14 +190,14 @@ where
         num_devices: 1,
         threads_per_device,
         token_unit_type,
-        token_unit_len,
+        num_units_per_token,
         is_legacy_rwkv_format,
         context_length,
         _phantom_t: PhantomData::<T>,
         _phantom_token_unit: PhantomData::<TokenUnit>,
     };
 
-    let processing_result = temp_writer_for_processing.process_single_device_output(device_id, device_specific_mmap_item_rx, mp).await;
+    let processing_result = temp_writer_for_processing.process_single_device_output(device_id, device_line_rx, mp).await;
     
     match data_fetch_task.await {
         Ok(Ok(())) => { /* Fetch task completed cleanly */ }
@@ -222,7 +221,7 @@ where
             num_devices,
             threads_per_device,
             token_unit_type,
-            token_unit_len,
+            num_units_per_token,
             is_legacy_rwkv_format,
             context_length,
         } = endpoint_config
@@ -233,12 +232,12 @@ where
             if *threads_per_device == 0 {
                 panic!("[MmapWriter::new] threads_per_device cannot be zero.");
             }
-            if *token_unit_len == 0 {
-                panic!("[MmapWriter::new] token_unit_len cannot be zero.");
+            if *num_units_per_token == 0 {
+                panic!("[MmapWriter::new] num_units_per_token cannot be zero.");
             }
             if *is_legacy_rwkv_format {
                 assert_eq!(*token_unit_type, MmapTokenUnitType::U16, "Legacy RWKV must use U16 tokens.");
-                assert_eq!(*token_unit_len, 1, "Legacy RWKV format must have token_unit_len of 1.");
+                assert_eq!(*num_units_per_token, 1, "Legacy RWKV format must have num_units_per_token of 1.");
             }
             fs::create_dir_all(base_path).unwrap_or_else(|e| panic!("[MmapWriter::new] Failed to create output base directory '{}': {}. This is critical.", base_path, e));
             Self {
@@ -247,7 +246,7 @@ where
                 num_devices: *num_devices,
                 threads_per_device: *threads_per_device,
                 token_unit_type: *token_unit_type,
-                token_unit_len: *token_unit_len,
+                num_units_per_token: *num_units_per_token,
                 is_legacy_rwkv_format: *is_legacy_rwkv_format,
                 context_length: *context_length,
                 _phantom_t: PhantomData,
@@ -261,14 +260,14 @@ where
     async fn process_single_device_output(
         &self,
         device_id: usize,
-        mut incoming_mmap_item_rx: TokioReceiver<MmapItem<TokenUnit>>,
+        mut incoming_line_rx: TokioReceiver<MmapItem<TokenUnit>>,
         mp: Arc<MultiProgress>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-        let overall_start_time_device = Instant::now();
-        let device_output_filename_base = format!("{}_device_{}", self.output_filename, device_id);
+        let device_start_time = Instant::now();
+        let device_filename = format!("{}_device_{}", self.output_filename, device_id);
         mp.println(format!(
             "[MmapWriter Device {}] Processing started. Output: {}. Threads: {}.",
-            device_id, device_output_filename_base, self.threads_per_device
+            device_id, device_filename, self.threads_per_device
         )).unwrap_or_default();
 
         if self.threads_per_device == 1 {
@@ -281,35 +280,35 @@ where
                     .progress_chars("=> "),
             );
             processing_pb.enable_steady_tick(Duration::from_millis(100));
-            let final_bin_file_path = self.output_base_path.join(format!("{}.bin", device_output_filename_base));
+            let bin_path = self.output_base_path.join(format!("{}.bin", device_filename));
             const DIRECT_WRITE_BUFFER_CAPACITY: usize = 1024 * 1024; // 1MB
-            let mut final_bin_file_writer = BufWriter::with_capacity(DIRECT_WRITE_BUFFER_CAPACITY, File::create(&final_bin_file_path)?);
-            let mut logical_item_counts: Vec<u64> = Vec::new();
-            let mut total_bytes_written: u64 = 0;
-            let mut total_units_processed: u64 = 0;
-            let mut items_processed_count: u64 = 0;
+            let mut bin_writer = BufWriter::with_capacity(DIRECT_WRITE_BUFFER_CAPACITY, File::create(&bin_path)?);
+            let mut nums_tokens_per_line: Vec<u64> = Vec::new();
+            let mut size_written: u64 = 0;
+            let mut num_token_units_processed: u64 = 0;
+            let mut lines_processed: u64 = 0;
 
-            while let Some(mmap_item) = incoming_mmap_item_rx.recv().await {
+            while let Some(mmap_item) = incoming_line_rx.recv().await {
                 processing_pb.inc(1);
-                items_processed_count += 1;
+                lines_processed += 1;
                 if mmap_item.tokens.is_empty() {
-                    logical_item_counts.push(0);
+                    nums_tokens_per_line.push(0);
                     continue;
                 }
-                if mmap_item.tokens.len() % self.token_unit_len != 0 {
+                if mmap_item.tokens.len() % self.num_units_per_token != 0 {
                     return Err(Box::new(FrameworkError::InternalError(format!(
-                        "[Device {}] MmapItem with {} units, not divisible by unit_len {}. Error.", 
-                        device_id, mmap_item.tokens.len(), self.token_unit_len
+                        "[Device {}] MmapItem with {} units, not divisible by num_units_per_token {}. Error.", 
+                        device_id, mmap_item.tokens.len(), self.num_units_per_token
                     ))));
                 }
-                let num_logical_tokens = (mmap_item.tokens.len() / self.token_unit_len) as u64;
-                logical_item_counts.push(num_logical_tokens);
-                total_units_processed += mmap_item.tokens.len() as u64;
-                let token_bytes_slice = bytemuck::cast_slice(&mmap_item.tokens);
-                final_bin_file_writer.write_all(token_bytes_slice)?;
-                total_bytes_written += token_bytes_slice.len() as u64;
+                let num_tokens = (mmap_item.tokens.len() / self.num_units_per_token) as u64;
+                nums_tokens_per_line.push(num_tokens);
+                num_token_units_processed += mmap_item.tokens.len() as u64;
+                let token_data = bytemuck::cast_slice(&mmap_item.tokens);
+                bin_writer.write_all(token_data)?;
+                size_written += token_data.len() as u64;
             }
-            final_bin_file_writer.flush()?;
+            bin_writer.flush()?;
             let final_direct_write_msg = format!(
                 "[D{device_id} ST DirectWrite] Finished. {items} items. ({elapsed})",
                 device_id = device_id,
@@ -317,19 +316,19 @@ where
                 elapsed = format!("{:.2?}", processing_pb.elapsed())
             );
             processing_pb.finish_with_message(final_direct_write_msg);
-            self.write_device_idx_file(device_id, &final_bin_file_path, &logical_item_counts, Arc::clone(&mp))?;
+            self.write_device_idx_file(device_id, &bin_path, &nums_tokens_per_line, Arc::clone(&mp))?;
             mp.println(format!(
                 "[MmapWriter Device {} ST] Finished in {:?}. Items: {}. Units: {}. Size: {:.2}MB.",
-                device_id, overall_start_time_device.elapsed(), items_processed_count, total_units_processed, total_bytes_written as f64 / (1024.0 * 1024.0)
+                device_id, device_start_time.elapsed(), lines_processed, num_token_units_processed, size_written as f64 / (1024.0 * 1024.0)
             )).unwrap_or_default();
-            let total_logical_tokens_for_device: u64 = logical_item_counts.iter().sum();
+            let total_tokens_for_device: u64 = nums_tokens_per_line.iter().sum();
             if let Some(ctx_len) = self.context_length {
                 let context_length = ctx_len as u64;
-                if context_length > 0 && total_logical_tokens_for_device > context_length * 3 {
-                    let n_chunk = (total_logical_tokens_for_device / context_length).saturating_sub(1);
+                if context_length > 0 && total_tokens_for_device > context_length * 3 {
+                    let dataset_slot = (total_tokens_for_device / context_length).saturating_sub(1);
                     let mut magic_prime_device: u64 = 0;
-                    for i in (0..n_chunk).rev() { if i % 3 == 2 && primes::is_prime(i) { magic_prime_device = i; break; } }
-                    mp.println(format!("[Device {} ST] Magic prime: {}. (Tokens: {}, Context: {})", device_id, magic_prime_device, total_logical_tokens_for_device, context_length)).unwrap_or_default();
+                    for i in (0..dataset_slot).rev() { if i % 3 == 2 && primes::is_prime(i) { magic_prime_device = i; break; } }
+                    mp.println(format!("[Device {} ST] Magic prime: {}. (Tokens: {}, Context: {})", device_id, magic_prime_device, total_tokens_for_device, context_length)).unwrap_or_default();
                 }
             }
             Ok(())
@@ -345,9 +344,9 @@ where
             let (coordinator_input_tx, mut coordinator_input_rx): (TokioSender<Option<MmapItem<TokenUnit>>>, TokioReceiver<Option<MmapItem<TokenUnit>>>) = channel(self.threads_per_device * 2);
             let (worker_result_tx, worker_result_rx): (StdSender<TempBinWorkerResult>, StdReceiver<TempBinWorkerResult>) = mpsc::channel();
             let num_workers_for_coord = self.threads_per_device;
-            let filename_for_coord = device_output_filename_base.clone();
+            let filename = device_filename.clone();
             let base_path_for_coord = self.output_base_path.clone();
-            let token_unit_len_for_worker = self.token_unit_len;
+            let num_units_per_token_for_worker = self.num_units_per_token;
             let mp_for_coord = Arc::clone(&mp);
             let device_id_for_coord_thread = device_id;
 
@@ -361,25 +360,25 @@ where
                         let (tx_to_worker_task, mut rx_for_worker_task): (TokioSender<Option<MmapItem<TokenUnit>>>, TokioReceiver<Option<MmapItem<TokenUnit>>>) = channel(100);
                         worker_senders.push(tx_to_worker_task);
                         let result_sender_for_worker_task = worker_result_tx.clone();
-                        let temp_file_base_for_worker_task = base_path_for_coord.join(format!("{}_temp_worker_{}", filename_for_coord, worker_idx));
-                        let current_token_unit_len_for_task = token_unit_len_for_worker;
+                        let temp_file_base_for_worker_task = base_path_for_coord.join(format!("{}_temp_worker_{}", filename, worker_idx));
+                        let current_num_units_per_token_for_task = num_units_per_token_for_worker;
                         let current_device_id_for_task = device_id_for_coord_thread;
                         worker_handles.push(tokio::spawn(async move {
                             let temp_bin_file_path_task = temp_file_base_for_worker_task.with_extension("bin.tmp");
                             let mut temp_bin_writer_task = BufWriter::new(File::create(&temp_bin_file_path_task).unwrap_or_else(|e| panic!("[D{}W{}] Failed create tmp '{}': {}", current_device_id_for_task, worker_idx, temp_bin_file_path_task.display(), e)));
-                            let mut logical_counts_task = Vec::new(); let mut bytes_written_task = 0; let mut units_processed_task = 0;
+                            let mut nums_tokens_task = Vec::new(); let mut bytes_written_task = 0; let mut token_units_processed_task = 0;
                             while let Some(Some(mmap_item_in_task)) = rx_for_worker_task.recv().await {
-                                if mmap_item_in_task.tokens.is_empty() { logical_counts_task.push(0); continue; }
-                                if mmap_item_in_task.tokens.len() % current_token_unit_len_for_task != 0 { panic!("[D{}W{}] Item units {} not div by unit_len {}. Error.", current_device_id_for_task, worker_idx, mmap_item_in_task.tokens.len(), current_token_unit_len_for_task); }
-                                let num_logical_for_item_task = (mmap_item_in_task.tokens.len() / current_token_unit_len_for_task) as u32;
-                                if num_logical_for_item_task as usize * current_token_unit_len_for_task != mmap_item_in_task.tokens.len() { panic!("[D{}W{}] Overflow u32 logical tokens.", current_device_id_for_task, worker_idx); }
-                                logical_counts_task.push(num_logical_for_item_task); units_processed_task += mmap_item_in_task.tokens.len() as u64;
+                                if mmap_item_in_task.tokens.is_empty() { nums_tokens_task.push(0); continue; }
+                                if mmap_item_in_task.tokens.len() % current_num_units_per_token_for_task != 0 { panic!("[D{}W{}] Item units {} not div by num_units_per_token {}. Error.", current_device_id_for_task, worker_idx, mmap_item_in_task.tokens.len(), current_num_units_per_token_for_task); }
+                                let num_tokens_for_item_task = (mmap_item_in_task.tokens.len() / current_num_units_per_token_for_task) as u32;
+                                if num_tokens_for_item_task as usize * current_num_units_per_token_for_task != mmap_item_in_task.tokens.len() { panic!("[D{}W{}] Overflow u32 tokens.", current_device_id_for_task, worker_idx); }
+                                nums_tokens_task.push(num_tokens_for_item_task); token_units_processed_task += mmap_item_in_task.tokens.len() as u64;
                                 let slice_task = bytemuck::cast_slice(&mmap_item_in_task.tokens);
                                 temp_bin_writer_task.write_all(slice_task).unwrap_or_else(|e| panic!("[D{}W{}] Failed write tmp '{}': {}", current_device_id_for_task, worker_idx, temp_bin_file_path_task.display(), e));
                                 bytes_written_task += slice_task.len() as u64;
                             }
                             temp_bin_writer_task.flush().unwrap_or_else(|e| panic!("[D{}W{}] Failed flush tmp '{}': {}", current_device_id_for_task, worker_idx, temp_bin_file_path_task.display(), e));
-                            if result_sender_for_worker_task.send(TempBinWorkerResult{worker_id: worker_idx, temp_bin_file_path: temp_bin_file_path_task, logical_item_counts: logical_counts_task, bytes_written_to_temp_bin: bytes_written_task, total_units_processed_by_worker: units_processed_task}).is_err(){
+                            if result_sender_for_worker_task.send(TempBinWorkerResult{worker_id: worker_idx, temp_bin_path: temp_bin_file_path_task, nums_tokens_per_line: nums_tokens_task, temp_bin_size: bytes_written_task, num_token_units_processed: token_units_processed_task}).is_err(){
                                 eprintln!("[D{}W{}] Failed send result, coord likely closed.", current_device_id_for_task, worker_idx);
                             }
                         }));
@@ -416,8 +415,8 @@ where
             let pb_clone_for_forwarder = processing_pb.clone(); 
             let local_device_id_for_fwd = device_id;
             let forward_to_coord_handle = tokio::spawn(async move {
-                let mut local_incoming_mmap_item_rx = incoming_mmap_item_rx;
-                while let Some(mmap_item) = local_incoming_mmap_item_rx.recv().await {
+                let mut local_incoming_line_rx = incoming_line_rx;
+                while let Some(mmap_item) = local_incoming_line_rx.recv().await {
                     pb_clone_for_forwarder.inc(1);
                     if coordinator_input_tx.send(Some(mmap_item)).await.is_err() {
                         eprintln!("[D{} FwdToCoord] Failed to send item to its coordinator. Coordinator likely terminated.", local_device_id_for_fwd);
@@ -447,30 +446,30 @@ where
             mp.println(format!("[D{}] Collected {} worker results.", device_id, collected_worker_results.len())).unwrap_or_default();
             if collected_worker_results.is_empty() && approx_items_via_coord > 0 && self.threads_per_device > 0 {
                 mp.println(format!("[D{}] Warning: No worker results, but {} items proxied. Check worker logic or if items were empty.", device_id, approx_items_via_coord)).unwrap_or_default();
-                let final_bin_file_path_empty = self.output_base_path.join(format!("{}.bin", device_output_filename_base));
-                File::create(&final_bin_file_path_empty)?.flush()?;
-                self.write_device_idx_file(device_id, &final_bin_file_path_empty, &[], Arc::clone(&mp))?;
+                let bin_path_empty = self.output_base_path.join(format!("{}.bin", device_filename));
+                File::create(&bin_path_empty)?.flush()?;
+                self.write_device_idx_file(device_id, &bin_path_empty, &[], Arc::clone(&mp))?;
                 return Ok(());
             }
             let mut final_worker_results = collected_worker_results; final_worker_results.sort_by_key(|r| r.worker_id);
-            let total_docs_from_workers: usize = final_worker_results.iter().map(|r| r.logical_item_counts.len()).sum();
-            let total_tokens_from_workers: u64 = final_worker_results.iter().map(|r| r.total_units_processed_by_worker).sum();
-            let (final_bin_file_path_merged, total_bytes_in_final_bin_merged) = self.merge_device_temp_bin_files(device_id, &device_output_filename_base, &final_worker_results, Arc::clone(&mp))?;
-            let all_item_token_counts_merged: Vec<u64> = final_worker_results.iter().flat_map(|r| r.logical_item_counts.iter().map(|&count| count as u64)).collect();
-            self.write_device_idx_file(device_id, &final_bin_file_path_merged, &all_item_token_counts_merged, Arc::clone(&mp))?;
+            let total_lines_from_workers: usize = final_worker_results.iter().map(|r| r.nums_tokens_per_line.len()).sum();
+            let total_token_units_from_workers: u64 = final_worker_results.iter().map(|r| r.num_token_units_processed).sum();
+            let (merged_bin_path, merged_bin_size) = self.merge_device_temp_bin_files(device_id, &device_filename, &final_worker_results, Arc::clone(&mp))?;
+            let all_tokens_per_line_merged: Vec<u64> = final_worker_results.iter().flat_map(|r| r.nums_tokens_per_line.iter().map(|&count| count as u64)).collect();
+            self.write_device_idx_file(device_id, &merged_bin_path, &all_tokens_per_line_merged, Arc::clone(&mp))?;
             self.cleanup_device_temp_bin_files(device_id, &final_worker_results, Arc::clone(&mp));
             mp.println(format!(
-                "[D{} MT] Finished in {:?}. Items via coord: {}. Items from workers: {}. Tokens from workers: {}. Final .bin size: {:.2}MB.",
-                device_id, overall_start_time_device.elapsed(), approx_items_via_coord, total_docs_from_workers, total_tokens_from_workers, total_bytes_in_final_bin_merged as f64 / (1024.0 * 1024.0)
+                "[D{} MT] Finished in {:?}. Items via coord: {}. Lines from workers: {}. Token units from workers: {}. Final .bin size: {:.2}MB.",
+                device_id, device_start_time.elapsed(), approx_items_via_coord, total_lines_from_workers, total_token_units_from_workers, merged_bin_size as f64 / (1024.0 * 1024.0)
             )).unwrap_or_default();
-            let total_logical_tokens_for_device_mt: u64 = all_item_token_counts_merged.iter().sum();
+            let total_tokens_for_device_mt: u64 = all_tokens_per_line_merged.iter().sum();
             if let Some(ctx_len_mt) = self.context_length {
                 let context_length_mt = ctx_len_mt as u64;
-                if context_length_mt > 0 && total_logical_tokens_for_device_mt > context_length_mt * 3 {
-                    let n_chunk_mt = (total_logical_tokens_for_device_mt / context_length_mt).saturating_sub(1);
+                if context_length_mt > 0 && total_tokens_for_device_mt > context_length_mt * 3 {
+                    let dataset_slot_mt = (total_tokens_for_device_mt / context_length_mt).saturating_sub(1);
                     let mut magic_prime_device_mt: u64 = 0;
-                    for i in (0..n_chunk_mt).rev() { if i % 3 == 2 && primes::is_prime(i) { magic_prime_device_mt = i; break; } }
-                    mp.println(format!("[D{} MT] Magic prime: {}. (Total logical tokens: {}, Context: {})", device_id, magic_prime_device_mt, total_logical_tokens_for_device_mt, context_length_mt)).unwrap_or_default();
+                    for i in (0..dataset_slot_mt).rev() { if i % 3 == 2 && primes::is_prime(i) { magic_prime_device_mt = i; break; } }
+                    mp.println(format!("[D{} MT] Magic prime: {}. (Total tokens: {}, Context: {})", device_id, magic_prime_device_mt, total_tokens_for_device_mt, context_length_mt)).unwrap_or_default();
                 }
             }
             Ok(())
@@ -488,13 +487,13 @@ where
         let mut final_bin_file_writer = BufWriter::new(File::create(&final_bin_file_path)?);
         let mut total_bytes_written_to_final_bin: u64 = 0;
         mp.println(format!("[D{}] Merging {} temp .bin files into {}", device_id, worker_results.len(), final_bin_file_path.display())).unwrap_or_default();
-        let merge_pb = mp.add(ProgressBar::new(worker_results.iter().map(|r| r.bytes_written_to_temp_bin).sum()));
+        let merge_pb = mp.add(ProgressBar::new(worker_results.iter().map(|r| r.temp_bin_size).sum()));
         let pb_template = format!("[D{} Merge {{elapsed_precise}}] {{bar:40.green/blue}} {{percent:>3}}%% ({{bytes}}/{{total_bytes}}) {{bytes_per_sec}}, ETA: {{eta}})", device_id);
         merge_pb.set_style(ProgressStyle::with_template(&pb_template).unwrap().progress_chars("=> "));
         merge_pb.enable_steady_tick(Duration::from_millis(100));
         const FAST_COPY_BUFFER_SIZE: usize = 1024 * 1024;
         for result in worker_results {
-            let temp_file = File::open(&result.temp_bin_file_path)?;
+            let temp_file = File::open(&result.temp_bin_path)?;
             let bytes_copied = fast_copy(temp_file, &mut final_bin_file_writer, FAST_COPY_BUFFER_SIZE)?;
             total_bytes_written_to_final_bin += bytes_copied;
             merge_pb.inc(bytes_copied);
@@ -513,31 +512,31 @@ where
     fn write_device_idx_file(
         &self,
         device_id: usize,
-        final_bin_path: &Path, 
-        all_item_token_counts: &[u64],
+        bin_path: &Path, 
+        nums_tokens_per_line: &[u64],
         mp: Arc<MultiProgress>,
     ) -> Result<(), FrameworkError> {
-        let final_idx_path = final_bin_path.with_extension("idx");
-        mp.println(format!("[D{}] Writing final .idx file to {}", device_id, final_idx_path.display())).unwrap_or_default();
-        let mut idx_file_writer = BufWriter::new(File::create(&final_idx_path)?);
+        let idx_path = bin_path.with_extension("idx");
+        mp.println(format!("[D{}] Writing final .idx file to {}", device_id, idx_path.display())).unwrap_or_default();
+        let mut idx_file_writer = BufWriter::new(File::create(&idx_path)?);
         let mut write_bytes = |bytes: &[u8]| -> Result<(), io::Error> { idx_file_writer.write_all(bytes) };
 
         if self.is_legacy_rwkv_format {
-            write_bytes(LEGACY_MMAP_BINIDX_MAGIC_HDR)?;
-            write_bytes(&LEGACY_MMAP_BINIDX_VERSION)?;
-            write_bytes(&[LEGACY_MMAP_BINIDX_DTYPE_U16])?;
+            write_bytes(MMAP_MAGIC_HDR)?;
+            write_bytes(&RWKV_MMAP_VERSION)?;
+            write_bytes(&[RWKV_MMAP_DTYPE_U16])?;
         } else {
-            write_bytes(GENERIC_MMAP_MAGIC_HDR)?;
-            write_bytes(&GENERIC_MMAP_VERSION)?;
+            write_bytes(MMAP_MAGIC_HDR)?;
+            write_bytes(&ORIGINIUM_MMAP_VERSION)?;
             write_bytes(&(self.token_unit_type as u8).to_le_bytes())?;
-            write_bytes(&(self.token_unit_len as u32).to_le_bytes())?;
+            write_bytes(&(self.num_units_per_token as u32).to_le_bytes())?;
         }
-        let num_items = all_item_token_counts.len() as u64;
-        write_bytes(&num_items.to_le_bytes())?;
-        let doc_indices_len = num_items + 1;
+        let num_lines = nums_tokens_per_line.len() as u64;
+        write_bytes(&num_lines.to_le_bytes())?;
+        let doc_indices_len = num_lines + 1;
         write_bytes(&doc_indices_len.to_le_bytes())?;
 
-        for &token_count_u64 in all_item_token_counts {
+        for &token_count_u64 in nums_tokens_per_line {
             if token_count_u64 > u32::MAX as u64 {
                  return Err(FrameworkError::InternalError(format!(
                     "[D{}] Token count {} exceeds {}. Cannot write to .idx.", device_id, token_count_u64, u32::MAX
@@ -548,14 +547,14 @@ where
         }
         let mut current_byte_offset: u64 = 0;
         let size_of_token_unit = std::mem::size_of::<TokenUnit>() as u64;
-        for &token_count_u64 in all_item_token_counts {
+        for &token_count_u64 in nums_tokens_per_line {
             write_bytes(&current_byte_offset.to_le_bytes())?;
-            let item_byte_size_result = token_count_u64.checked_mul(self.token_unit_len as u64).and_then(|v| v.checked_mul(size_of_token_unit));
+            let item_byte_size_result = token_count_u64.checked_mul(self.num_units_per_token as u64).and_then(|v| v.checked_mul(size_of_token_unit));
             let item_size_in_bytes = match item_byte_size_result {
                  Some(size) => size,
                  None => return Err(FrameworkError::InternalError(format!(
-                     "[D{}] Overflow calc byte size ({} toks * {} ulen * {} bytes/u) for .idx.",
-                     device_id, token_count_u64, self.token_unit_len, size_of_token_unit))),
+                     "[D{}] Overflow calc byte size ({} toks * {} units_per_tok * {} bytes/u) for .idx.",
+                     device_id, token_count_u64, self.num_units_per_token, size_of_token_unit))),
             };
             current_byte_offset = match current_byte_offset.checked_add(item_size_in_bytes) {
                 Some(offset) => offset,
@@ -565,7 +564,7 @@ where
             };
         }
         write_bytes(&current_byte_offset.to_le_bytes())?;
-        for i in 0..=num_items {
+        for i in 0..=num_lines {
             write_bytes(&(i as u64).to_le_bytes())?;
         }
         idx_file_writer.flush()?;
@@ -576,8 +575,8 @@ where
     fn cleanup_device_temp_bin_files(&self, device_id: usize, worker_results: &[TempBinWorkerResult], mp: Arc<MultiProgress>) {
         mp.println(format!("[D{}] Cleaning up {} temp .bin files...", device_id, worker_results.len())).unwrap_or_default();
         for result in worker_results {
-            if let Err(e) = fs::remove_file(&result.temp_bin_file_path) {
-                eprintln!("[D{}] Failed to remove temp file {}: {}", device_id, result.temp_bin_file_path.display(), e);
+            if let Err(e) = fs::remove_file(&result.temp_bin_path) {
+                eprintln!("[D{}] Failed to remove temp file {}: {}", device_id, result.temp_bin_path.display(), e);
             }
         }
         mp.println(format!("[D{}] Temp .bin files cleanup complete.", device_id)).unwrap_or_default();

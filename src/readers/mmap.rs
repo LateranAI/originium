@@ -20,12 +20,11 @@ use crate::errors::FrameworkError;
 
 const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 100;
 
-const LEGACY_MMAP_BINIDX_MAGIC_HDR: &[u8] = b"MMIDIDX\x00\x00";
-const LEGACY_MMAP_BINIDX_VERSION: [u8; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
-const LEGACY_MMAP_BINIDX_DTYPE_U16: u8 = 8;
+const MMAP_MAGIC_HDR: &[u8] = b"MMIDIDX\x00\x00";
+const RWKV_MMAP_VERSION: [u8; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
+const RWKV_MMAP_DTYPE_U16: u8 = 8;
 
-const GENERIC_MMAP_MAGIC_HDR: &[u8] = b"MMIDIDX\x00\x00";
-const GENERIC_MMAP_VERSION_V2: [u8; 8] = [2, 0, 0, 0, 0, 0, 0, 0];
+const ORIGINIUM_MMAP_VERSION: [u8; 8] = [2, 0, 0, 0, 0, 0, 0, 0];
 
 pub struct MmapReader<Item, TokenUnit>
 where
@@ -33,49 +32,49 @@ where
     TokenUnit: Pod + Zeroable + Copy + Clone + Debug + serde::Serialize + Send + Sync + 'static,
 {
     bin_mmap: Arc<Mmap>,
-    item_logical_token_counts: Arc<Vec<u32>>,
-    item_byte_offsets: Arc<Vec<u64>>,
-    num_logical_items: usize,
-    item_cache: Cache<usize, Arc<Vec<TokenUnit>>>,
+    nums_tokens_per_line: Arc<Vec<u32>>,
+    line_offsets: Arc<Vec<u64>>,
+    num_lines: usize,
+    line_cache: Cache<usize, Arc<Vec<TokenUnit>>>,
     channel_buffer_size: usize,
     token_unit_type: MmapTokenUnitType,
-    token_unit_len: usize,
+    num_units_per_token: usize,
     is_legacy_format_file: bool,
     _marker: PhantomData<(Item, TokenUnit)>,
 }
 
 fn get_item_units_from_data<TokenUnit>(
-    item_index: usize,
-    num_logical_items: usize,
+    line_index: usize,
+    num_lines: usize,
     bin_mmap: &Mmap,
-    item_logical_token_counts: &[u32],
-    item_byte_offsets: &[u64],
-    token_unit_len: usize,
-    item_cache: &Cache<usize, Arc<Vec<TokenUnit>>>,
+    nums_tokens_per_line: &[u32],
+    line_offsets: &[u64],
+    num_units_per_token: usize,
+    line_cache: &Cache<usize, Arc<Vec<TokenUnit>>>,
 ) -> Option<Arc<Vec<TokenUnit>>>
 where
     TokenUnit: Pod + Zeroable + Copy + Clone + Debug + serde::Serialize + Send + Sync + 'static,
 {
-    if item_index >= num_logical_items {
+    if line_index >= num_lines {
         return None;
     }
 
-    if let Some(cached_units) = item_cache.get(&item_index) {
+    if let Some(cached_units) = line_cache.get(&line_index) {
         return Some(cached_units);
     }
 
-    let logical_token_count = item_logical_token_counts
-        .get(item_index)
+    let num_tokens = nums_tokens_per_line
+        .get(line_index)
         .copied()
         .unwrap_or(0) as usize;
-    if logical_token_count == 0 {
+    if num_tokens == 0 {
         let arc_units = Arc::new(Vec::new());
-        item_cache.insert(item_index, arc_units.clone());
+        line_cache.insert(line_index, arc_units.clone());
         return Some(arc_units);
     }
 
-    let total_units_for_item = logical_token_count.checked_mul(token_unit_len)?;
-    let byte_offset = item_byte_offsets.get(item_index).copied().unwrap_or(0) as usize;
+    let total_token_units_for_line = num_tokens.checked_mul(num_units_per_token)?;
+    let byte_offset = line_offsets.get(line_index).copied().unwrap_or(0) as usize;
 
     if byte_offset >= bin_mmap.len() {
         return None;
@@ -85,7 +84,7 @@ where
     if unit_size_bytes == 0 {
         return None;
     }
-    let byte_length = total_units_for_item.checked_mul(unit_size_bytes)?;
+    let byte_length = total_token_units_for_line.checked_mul(unit_size_bytes)?;
     let end_offset = byte_offset.checked_add(byte_length)?;
 
     if end_offset > bin_mmap.len() {
@@ -98,16 +97,16 @@ where
         Ok(units_slice) => {
             let units_vec: Vec<TokenUnit> = units_slice.to_vec();
             let arc_units = Arc::new(units_vec);
-            item_cache.insert(item_index, arc_units.clone());
+            line_cache.insert(line_index, arc_units.clone());
             Some(arc_units)
         }
         Err(e) => {
             eprintln!(
-                "[MmapReader::get_item_units_from_data] Failed to cast slice for item {}: {:?}. Bytes len: {}, Expected units: {}. Unit size: {}",
-                item_index,
+                "[MmapReader::get_item_units_from_data] Failed to cast slice for line {}: {:?}. Bytes len: {}, Expected units: {}. Unit size: {}",
+                line_index,
                 e,
                 token_bytes_slice.len(),
-                total_units_for_item,
+                total_token_units_for_line,
                 unit_size_bytes
             );
             None
@@ -126,7 +125,7 @@ where
             _num_devices, 
             _threads_per_device, 
             expected_token_unit_type, 
-            expected_token_unit_len, 
+            expected_num_units_per_token, 
             expected_is_legacy_format, 
             _expected_context_length // Destructure, but ignore for reader assertions
         ) = endpoint_config.unwrap_mmap();
@@ -154,24 +153,24 @@ where
 
         let file_is_legacy_format: bool;
         let file_token_unit_type: MmapTokenUnitType;
-        let file_token_unit_len: usize;
+        let file_num_units_per_token: usize;
 
-        if read_magic == LEGACY_MMAP_BINIDX_MAGIC_HDR
-            && read_version_buf == LEGACY_MMAP_BINIDX_VERSION
+        if read_magic == MMAP_MAGIC_HDR
+            && read_version_buf == RWKV_MMAP_VERSION
         {
             file_is_legacy_format = true;
             file_token_unit_type = MmapTokenUnitType::U16;
-            file_token_unit_len = 1;
+            file_num_units_per_token = 1;
             let mut legacy_dtype_buf = [0u8; 1];
             idx_file_handle
                 .read_exact(&mut legacy_dtype_buf)
                 .expect("Failed to read legacy DTYPE");
             assert_eq!(
-                legacy_dtype_buf[0], LEGACY_MMAP_BINIDX_DTYPE_U16,
+                legacy_dtype_buf[0], RWKV_MMAP_DTYPE_U16,
                 "Legacy .idx DTYPE mismatch"
             );
-        } else if read_magic == GENERIC_MMAP_MAGIC_HDR
-            && read_version_buf == GENERIC_MMAP_VERSION_V2
+        } else if read_magic == MMAP_MAGIC_HDR
+            && read_version_buf == ORIGINIUM_MMAP_VERSION
         {
             file_is_legacy_format = false;
             let mut dtype_buf = [0u8; 1];
@@ -187,9 +186,9 @@ where
             idx_file_handle
                 .read_exact(&mut unit_len_buf)
                 .expect("Failed to read generic TOKEN_UNIT_LEN");
-            file_token_unit_len = u32::from_le_bytes(unit_len_buf) as usize;
-            if file_token_unit_len == 0 {
-                panic!("TOKEN_UNIT_LEN in .idx file cannot be zero.");
+            file_num_units_per_token = u32::from_le_bytes(unit_len_buf) as usize;
+            if file_num_units_per_token == 0 {
+                panic!("num_units_per_token in .idx file cannot be zero.");
             }
         } else {
             panic!(
@@ -215,41 +214,41 @@ where
             idx_file_path.display()
         );
         assert_eq!(
-            file_token_unit_len,
-            expected_token_unit_len,
-            "Mismatch in token unit length: file has {} but config expects {}. File: {}",
-            file_token_unit_len,
-            expected_token_unit_len,
+            file_num_units_per_token,
+            expected_num_units_per_token,
+            "Mismatch in num_units_per_token: file has {} but config expects {}. File: {}",
+            file_num_units_per_token,
+            expected_num_units_per_token,
             idx_file_path.display()
         );
 
-        let mut num_items_buf = [0u8; 8];
+        let mut num_lines_buf = [0u8; 8];
         idx_file_handle
-            .read_exact(&mut num_items_buf)
-            .expect("Failed to read num_items");
-        let num_logical_items = u64::from_le_bytes(num_items_buf) as usize;
+            .read_exact(&mut num_lines_buf)
+            .expect("Failed to read num_lines");
+        let num_lines = u64::from_le_bytes(num_lines_buf) as usize;
 
         let mut doc_indices_len_buf = [0u8; 8];
         idx_file_handle
             .read_exact(&mut doc_indices_len_buf)
             .expect("Failed to read doc_indices_len");
 
-        let mut item_logical_token_counts_vec = Vec::with_capacity(num_logical_items);
-        for _ in 0..num_logical_items {
+        let mut nums_tokens_per_line_vec = Vec::with_capacity(num_lines);
+        for _ in 0..num_lines {
             let mut buf = [0u8; 4];
             idx_file_handle
                 .read_exact(&mut buf)
-                .expect("Failed to read item logical token count");
-            item_logical_token_counts_vec.push(u32::from_le_bytes(buf));
+                .expect("Failed to read num tokens for line");
+            nums_tokens_per_line_vec.push(u32::from_le_bytes(buf));
         }
 
-        let mut item_byte_offsets_vec = Vec::with_capacity(num_logical_items);
-        for _ in 0..num_logical_items {
+        let mut line_offsets_vec = Vec::with_capacity(num_lines);
+        for _ in 0..num_lines {
             let mut buf = [0u8; 8];
             idx_file_handle
                 .read_exact(&mut buf)
-                .expect("Failed to read item byte offset");
-            item_byte_offsets_vec.push(u64::from_le_bytes(buf));
+                .expect("Failed to read line byte offset");
+            line_offsets_vec.push(u64::from_le_bytes(buf));
         }
 
         let bin_file_path = PathBuf::from(&base_path_str).join(format!("{}.bin", filename_str));
@@ -263,20 +262,20 @@ where
                 .expect("Failed to mmap binary file")
         };
 
-        let item_cache = Cache::builder()
+        let line_cache = Cache::builder()
             .time_to_idle(Duration::from_secs(600))
             .max_capacity(10_000)
             .build();
 
         Ok(Self {
             bin_mmap: Arc::new(bin_mmap_instance),
-            item_logical_token_counts: Arc::new(item_logical_token_counts_vec),
-            item_byte_offsets: Arc::new(item_byte_offsets_vec),
-            num_logical_items,
-            item_cache,
+            nums_tokens_per_line: Arc::new(nums_tokens_per_line_vec),
+            line_offsets: Arc::new(line_offsets_vec),
+            num_lines,
+            line_cache,
             channel_buffer_size: DEFAULT_CHANNEL_BUFFER_SIZE,
             token_unit_type: file_token_unit_type,
-            token_unit_len: file_token_unit_len,
+            num_units_per_token: file_num_units_per_token,
             is_legacy_format_file: file_is_legacy_format,
             _marker: PhantomData,
         })
@@ -292,7 +291,7 @@ where
     }
 
     pub fn len(&self) -> usize {
-        self.num_logical_items
+        self.num_lines
     }
 }
 
@@ -308,7 +307,7 @@ where
         mp: Arc<MultiProgress>,
     ) -> mpsc::Receiver<Item> {
         let (tx, rx) = mpsc::channel(self.channel_buffer_size);
-        let total_items = self.num_logical_items;
+        let total_items = self.num_lines;
 
         let pb = mp.add(ProgressBar::new(total_items as u64));
         let pb_template = format!(
@@ -322,10 +321,10 @@ where
         pb.enable_steady_tick(Duration::from_millis(100));
 
         let bin_mmap_clone = Arc::clone(&self.bin_mmap);
-        let item_logical_token_counts_clone = Arc::clone(&self.item_logical_token_counts);
-        let item_byte_offsets_clone = Arc::clone(&self.item_byte_offsets);
-        let item_cache_clone = self.item_cache.clone();
-        let token_unit_len_clone = self.token_unit_len;
+        let nums_tokens_per_line_clone = Arc::clone(&self.nums_tokens_per_line);
+        let line_offsets_clone = Arc::clone(&self.line_offsets);
+        let line_cache_clone = self.line_cache.clone();
+        let num_units_per_token_clone = self.num_units_per_token;
         let parser = Arc::new(read_fn);
 
         tokio::spawn(async move {
@@ -339,10 +338,10 @@ where
                     i,
                     total_items,
                     &bin_mmap_clone,
-                    &item_logical_token_counts_clone,
-                    &item_byte_offsets_clone,
-                    token_unit_len_clone,
-                    &item_cache_clone,
+                    &nums_tokens_per_line_clone,
+                    &line_offsets_clone,
+                    num_units_per_token_clone,
+                    &line_cache_clone,
                 ) {
                     Some(units_arc) => {
                         let json_string = serde_json::to_string(&*units_arc).expect("Failed to serialize Mmap item (Vec<TokenUnit>) to JSON string");
